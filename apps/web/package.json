@@ -9,13 +9,24 @@
     "typecheck": "vue-tsc -b"
   },
   "dependencies": {
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/ibm-plex-sans": "5.3.0",
+    "@fontsource/literata": "5.3.0",
+    "@primeuix/themes": "1.2.5",
     "@scr/shared": "*",
+    "pinia": "4.0.3",
+    "primeicons": "8.0.2",
+    "primevue": "4.5.5",
+    "vue-router": "5.4.0",
     "vue": "3.5.43"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
     "@vitejs/plugin-vue": "6.0.10",
     "@vue/test-utils": "2.5.1",
+    "axe-core": "4.14.0",
     "jsdom": "26.1.0",
+    "tailwindcss": "4.3.3",
     "typescript": "6.0.2",
     "vite": "7.3.5",
     "vitest": "3.2.7",

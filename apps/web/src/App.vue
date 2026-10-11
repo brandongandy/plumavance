@@ -1,9 +1,13 @@
 <script setup lang="ts">
-const applicationName = 'Scr'
+import { RouterView } from 'vue-router'
 </script>
 
 <template>
-  <main id="main-content">
-    <h1>{{ applicationName }}</h1>
-  </main>
+  <a
+    href="#main-content"
+    class="fixed left-2 top-2 z-[1000] -translate-y-20 bg-[var(--color-focus)] px-3 py-2 text-sm font-semibold text-[var(--color-app)] focus:translate-y-0"
+  >
+    Skip to content
+  </a>
+  <RouterView />
 </template>
