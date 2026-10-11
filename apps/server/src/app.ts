@@ -4,6 +4,9 @@ import { ZodError } from 'zod'
 import { createBinderRepository } from './binder/repository.js'
 import { registerBinderRoutes } from './binder/routes.js'
 import { createBinderService } from './binder/service.js'
+import { createLocalConverters, type ConverterSet } from './compile/converters.js'
+import { registerCompileRoutes } from './compile/routes.js'
+import { createCompileService } from './compile/service.js'
 import { openDatabase } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
 import { createDocumentRepository } from './documents/repository.js'
@@ -21,6 +24,7 @@ export interface CreateAppOptions {
   databasePath: string
   staticRoot?: string
   clock?: () => Date
+  converters?: ConverterSet
 }
 
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
@@ -40,6 +44,11 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   )
   const snapshotRepository = createSnapshotRepository(database)
   const snapshotService = createSnapshotService(snapshotRepository, documentRepository, clock)
+  const compileService = createCompileService(
+    binderService,
+    documentRepository,
+    options.converters ?? createLocalConverters(),
+  )
 
   const app = Fastify({ logger: false })
 
@@ -48,6 +57,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   registerBinderRoutes(app, binderService)
   registerDocumentRoutes(app, documentService)
   registerSnapshotRoutes(app, snapshotService)
+  registerCompileRoutes(app, compileService)
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ApiError) {

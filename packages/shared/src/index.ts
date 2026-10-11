@@ -47,3 +47,9 @@ export {
   type RenameSnapshotRequest,
   type RestoreSnapshotRequest,
 } from './schemas/snapshots.js'
+export {
+  CompileFormatSchema,
+  CompileRequestSchema,
+  type CompileFormat,
+  type CompileRequest,
+} from './schemas/compile.js'
