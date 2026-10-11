@@ -318,29 +318,192 @@ button {
   font-size: 13px;
 }
 
-.editor-placeholder {
-  margin: 0 auto;
-  width: min(100%, 760px);
-  padding: 24px 28px;
+.editor-document-pane {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
 }
 
-.editor-placeholder > input {
+.document-header {
+  flex: none;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-chrome);
+  padding: 7px 12px;
+}
+
+.document-header > input {
   width: 100%;
   border: 0;
-  border-bottom: 1px solid var(--color-border);
   background: transparent;
-  padding: 0 0 10px;
+  padding: 0;
   color: var(--color-text);
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 600;
+  line-height: 28px;
 }
 
-.editor-placeholder [role='textbox'] {
-  min-height: 50vh;
-  padding-top: 24px;
+.save-status {
+  display: flex;
+  min-height: 24px;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-app);
+  padding: 2px 10px;
   color: var(--color-muted);
+  font-size: 11px;
+}
+
+.save-status.is-unsaved,
+.save-status.is-failed,
+.save-status.is-conflict {
+  color: var(--color-warning);
+}
+
+.save-status.is-failed,
+.save-status.is-conflict {
+  border-bottom-color: var(--color-warning);
+}
+
+.save-status-message {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-soft);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.save-status button {
+  min-height: 24px;
+  padding: 0 4px;
+  color: var(--color-focus);
+  font-size: 11px;
+}
+
+.document-editor {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.editor-toolbar {
+  display: flex;
+  min-height: 34px;
+  flex: none;
+  align-items: center;
+  gap: 1px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-chrome);
+  padding: 2px 6px;
+}
+
+.editor-toolbar button {
+  min-width: 29px;
+  height: 29px;
+  padding: 0 6px;
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.editor-toolbar button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--color-focus) 24%, transparent);
+  color: var(--color-text);
+}
+
+.editor-toolbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 4px;
+  background: var(--color-border);
+}
+
+.document-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  padding: 28px max(24px, calc((100% - 72ch) / 2));
+}
+
+.document-prose {
+  min-height: calc(100vh - 210px);
+  color: var(--color-text-soft);
   font-family: var(--font-prose);
   font-size: 18px;
+  line-height: 1.62;
+  outline: none;
+}
+
+.document-prose p,
+.document-prose blockquote,
+.document-prose ul,
+.document-prose ol {
+  margin: 0 0 0.9em;
+}
+
+.document-prose h1,
+.document-prose h2,
+.document-prose h3 {
+  margin: 1.2em 0 0.5em;
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  line-height: 1.25;
+}
+
+.document-prose h1 {
+  font-size: 1.55em;
+}
+
+.document-prose h2 {
+  font-size: 1.3em;
+}
+
+.document-prose h3 {
+  font-size: 1.12em;
+}
+
+.document-prose blockquote {
+  border-left: 2px solid var(--color-border);
+  padding-left: 14px;
+  color: var(--color-muted);
+}
+
+.document-prose hr {
+  margin: 1.5em 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.document-notes {
+  display: block;
+  height: 100%;
+}
+
+.document-notes textarea {
+  width: 100%;
+  height: 100%;
+  resize: none;
+  border: 0;
+  background: transparent;
+  padding: 10px;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  line-height: 1.5;
+  outline: none;
+}
+
+.inspector-panel {
+  height: calc(100% - 37px);
+  min-height: 0;
+}
+
+.inspector-panel > p {
+  margin: 12px;
+  color: var(--color-muted);
+  font-size: 12px;
 }
 
 .workspace-inspector-content {
@@ -451,9 +614,12 @@ button {
     min-height: 44px;
   }
 
-  .folder-contents,
-  .editor-placeholder {
+  .folder-contents {
     padding: 16px;
+  }
+
+  .document-scroll {
+    padding: 20px 16px;
   }
 }
 

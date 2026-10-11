@@ -2,20 +2,23 @@
 import type { BinderItemDto } from '@scr/shared'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
+import { useProvidedUnsavedGuard } from '../../composables/useUnsavedGuard.js'
 import { useWorkspaceStore } from '../../stores/workspace.js'
 import BinderToolbar from './BinderToolbar.vue'
 import BinderTreeItem from './BinderTreeItem.vue'
 import { createMoveIntent, useBinderMove } from './useBinderMove.js'
 
 const store = useWorkspaceStore()
+const unsavedGuard = useProvidedUnsavedGuard()
 const expandedIds = ref(new Set(store.items.filter((item) => item.kind === 'folder').map((item) => item.id)))
 const focusedId = ref(store.activeItemId ?? store.items[0]?.id ?? '')
 const editingId = ref<string | null>(null)
 const query = ref('')
 const draggedId = ref<string | null>(null)
 const pendingDeleteId = ref<string | null>(null)
+const initializedFromProject = ref(false)
 const { moveByPointer, moveByKeyboard } = useBinderMove((intent) => store.moveItem(intent))
 
 function childrenOf(parentId: string | null): BinderItemDto[] {
@@ -64,6 +67,7 @@ async function focusItem(id: string): Promise<void> {
 }
 
 function selectItem(item: BinderItemDto): void {
+  if (store.activeItemId !== item.id && !unsavedGuard.canTransition()) return
   store.activeItemId = item.id
   focusedId.value = item.id
 }
@@ -135,7 +139,7 @@ async function handleKeydown(event: KeyboardEvent, item: BinderItemDto): Promise
     editingId.value = item.id
   } else if (event.key === 'Delete') {
     event.preventDefault()
-    await store.trashItem(item.id)
+    if (unsavedGuard.canTransition()) await store.trashItem(item.id)
   } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
     const key = event.key.toLocaleLowerCase()
     const match = [...visibleItems.value.slice(index + 1), ...visibleItems.value.slice(0, index + 1)].find(
@@ -144,6 +148,23 @@ async function handleKeydown(event: KeyboardEvent, item: BinderItemDto): Promise
     if (match) await focusItem(match.id)
   }
 }
+
+watch(
+  () => store.items,
+  (items) => {
+    if (initializedFromProject.value || items.length === 0) return
+    expandedIds.value = new Set(items.filter((item) => item.kind === 'folder').map((item) => item.id))
+    focusedId.value = store.activeItemId ?? items[0]?.id ?? ''
+    initializedFromProject.value = true
+  },
+)
+
+watch(
+  () => store.activeItemId,
+  (id) => {
+    if (id && !store.items.some((item) => item.id === focusedId.value)) focusedId.value = id
+  },
+)
 
 async function rename(item: BinderItemDto, title: string): Promise<void> {
   editingId.value = null
@@ -157,6 +178,7 @@ function parentForNewItem(): string | null {
 }
 
 async function add(kind: 'folder' | 'document'): Promise<void> {
+  if (!unsavedGuard.canTransition()) return
   const parentId = parentForNewItem()
   if (parentId) expandedIds.value = new Set(expandedIds.value).add(parentId)
   await store.createItem(kind, parentId)
@@ -164,6 +186,11 @@ async function add(kind: 'folder' | 'document'): Promise<void> {
     editingId.value = store.activeItemId
     await focusItem(store.activeItemId)
   }
+}
+
+async function trashSelected(): Promise<void> {
+  if (!store.activeItemId || !unsavedGuard.canTransition()) return
+  await store.trashItem(store.activeItemId)
 }
 
 async function runSearch(): Promise<void> {
@@ -197,7 +224,7 @@ async function handleDrop(event: DragEvent, target: BinderItemDto): Promise<void
         @add-folder="add('folder')"
         @add-document="add('document')"
         @rename="editingId = store.activeItemId"
-        @trash="store.activeItemId && store.trashItem(store.activeItemId)"
+        @trash="trashSelected"
       />
     </div>
     <label class="binder-search">

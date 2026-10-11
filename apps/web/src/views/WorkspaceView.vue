@@ -1,19 +1,27 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AppToolbar from '../components/layout/AppToolbar.vue'
 import MobilePanelSwitcher from '../components/layout/MobilePanelSwitcher.vue'
 import StatusBar from '../components/layout/StatusBar.vue'
 import WorkspacePanes from '../components/layout/WorkspacePanes.vue'
+import { useUnsavedGuard } from '../composables/useUnsavedGuard.js'
 import BinderTree from '../features/binder/BinderTree.vue'
 import FolderContents from '../features/binder/FolderContents.vue'
+import DocumentEditor from '../features/editor/DocumentEditor.vue'
+import DocumentHeader from '../features/editor/DocumentHeader.vue'
+import SaveStatus from '../features/editor/SaveStatus.vue'
+import InspectorPane from '../features/inspector/InspectorPane.vue'
+import { useDocumentStore } from '../stores/document.js'
 import { useWorkspaceStore, type WorkspacePanel } from '../stores/workspace.js'
 
 type WorkspaceLayout = 'desktop' | 'tablet' | 'phone'
 
 const route = useRoute()
 const store = useWorkspaceStore()
+const documentStore = useDocumentStore()
+const unsavedGuard = useUnsavedGuard(() => documentStore.isDirty)
 const layout = ref<WorkspaceLayout>(layoutForWidth(window.innerWidth))
 
 const folderChildren = computed(() => {
@@ -51,6 +59,41 @@ function selectPanel(panel: WorkspacePanel): void {
   store.activePanel = panel
 }
 
+async function openFolderItem(itemId: string): Promise<void> {
+  if (itemId !== store.activeItemId && !unsavedGuard.canTransition()) return
+  store.activeItemId = itemId
+}
+
+async function saveDocument(): Promise<void> {
+  if (!(await documentStore.save()) || !documentStore.documentId) return
+  store.items = store.items.map((item) =>
+    item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
+  )
+}
+
+async function keepMine(): Promise<void> {
+  if (!(await documentStore.keepMine()) || !documentStore.documentId) return
+  store.items = store.items.map((item) =>
+    item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
+  )
+}
+
+async function reloadServerCopy(): Promise<void> {
+  if (!(await documentStore.reloadServerCopy()) || !documentStore.documentId) return
+  store.items = store.items.map((item) =>
+    item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
+  )
+}
+
+watch(
+  () => store.activeItemId,
+  async (itemId) => {
+    const item = store.items.find((candidate) => candidate.id === itemId)
+    if (item?.kind === 'document') await documentStore.load(item.id, () => true, true)
+    else documentStore.clear()
+  },
+)
+
 onMounted(() => {
   window.addEventListener('resize', updateLayout)
   void store.load(String(route.params.projectId))
@@ -64,8 +107,10 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
       :project-name="store.project?.name ?? 'Opening project…'"
       :binder-open="layout === 'desktop' ? store.binderOpen : store.activePanel === 'binder'"
       :inspector-open="layout === 'desktop' ? store.inspectorOpen : store.activePanel === 'inspector'"
+      :save-disabled="!documentStore.documentId || documentStore.saveState === 'saving' || !documentStore.isDirty"
       @toggle-binder="toggleBinder"
       @toggle-inspector="toggleInspector"
+      @save="saveDocument"
     />
 
     <p v-if="store.loading" role="status" class="workspace-message">Opening project…</p>
@@ -83,25 +128,35 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
             v-if="store.activeItem?.kind === 'folder'"
             :folder="store.activeItem"
             :items="folderChildren"
-            @open="store.activeItemId = $event.id"
+            @open="openFolderItem($event.id)"
           />
-          <div v-else-if="store.activeItem?.kind === 'document'" class="editor-placeholder">
-            <input :value="store.activeItem.title" aria-label="Document title" readonly />
-            <div role="textbox" aria-label="Document editor" aria-readonly="true">
-              The editor opens here.
-            </div>
+          <div v-else-if="store.activeItem?.kind === 'document'" class="editor-document-pane">
+            <p v-if="documentStore.loading" role="status" class="workspace-message">Opening document…</p>
+            <template v-else-if="documentStore.documentId === store.activeItem.id">
+              <DocumentHeader :model-value="documentStore.title" @update:model-value="documentStore.setTitle" />
+              <SaveStatus
+                :state="documentStore.saveState"
+                :message="documentStore.errorMessage"
+                @retry="saveDocument"
+                @reload="reloadServerCopy"
+                @keep-mine="keepMine"
+              />
+              <DocumentEditor
+                :model-value="documentStore.contentJson"
+                @update:model-value="documentStore.setContent"
+                @save="saveDocument"
+              />
+            </template>
           </div>
           <p v-else class="workspace-empty">Select or create a document.</p>
         </main>
       </template>
       <template #inspector>
-        <aside aria-label="Inspector" class="workspace-inspector-content">
-          <div role="tablist" aria-label="Inspector sections">
-            <button type="button" role="tab" aria-selected="true">Notes</button>
-            <button type="button" role="tab" aria-selected="false">Snapshots</button>
-          </div>
-          <p>No document selected.</p>
-        </aside>
+        <InspectorPane
+          :notes="documentStore.notesText"
+          :has-document="Boolean(documentStore.documentId)"
+          @update:notes="documentStore.setNotes"
+        />
       </template>
     </WorkspacePanes>
 
@@ -110,6 +165,11 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
       :active-panel="store.activePanel"
       @select="selectPanel"
     />
-    <StatusBar :item-title="store.activeItem?.title" />
+    <StatusBar
+      :item-title="store.activeItem?.title"
+      :save-state="documentStore.saveState"
+      :words="documentStore.counts.words"
+      :characters="documentStore.counts.characters"
+    />
   </div>
 </template>
