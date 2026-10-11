@@ -11,6 +11,7 @@ export type {
   ProjectDetailDto,
   ProjectDto,
   SearchResultDto,
+  SnapshotDto,
 } from './domain.js'
 export {
   CreateProjectRequestSchema,
@@ -37,3 +38,12 @@ export {
   SearchQuerySchema,
   type SaveDocumentRequest,
 } from './schemas/documents.js'
+export {
+  CreateSnapshotRequestSchema,
+  RenameSnapshotRequestSchema,
+  RestoreSnapshotRequestSchema,
+  SnapshotNameSchema,
+  type CreateSnapshotRequest,
+  type RenameSnapshotRequest,
+  type RestoreSnapshotRequest,
+} from './schemas/snapshots.js'

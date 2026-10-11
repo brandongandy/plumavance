@@ -43,6 +43,13 @@ export interface DocumentRepository {
   transaction<T>(operation: () => T): T
   find(id: string): DocumentDto | undefined
   save(input: SaveDocumentRecord): DocumentDto | undefined
+  restoreContent(input: {
+    documentId: string
+    contentJson: EditorDocument
+    contentText: string
+    expectedRevision: number
+    savedAt: string
+  }): DocumentDto | undefined
   search(projectId: string, query: string): SearchResultDto[]
 }
 
@@ -78,6 +85,19 @@ export function createDocumentRepository(database: Database.Database): DocumentR
         .prepare('UPDATE binder_items SET title = ?, updated_at = ? WHERE id = ?')
         .run(input.title, input.savedAt, input.documentId)
       return this.find(input.documentId)
+    },
+    restoreContent(input) {
+      const changed = database
+        .prepare(
+          `UPDATE documents
+           SET content_json = @contentJson,
+               content_text = @contentText,
+               revision = revision + 1,
+               saved_at = @savedAt
+           WHERE binder_item_id = @documentId AND revision = @expectedRevision`,
+        )
+        .run({ ...input, contentJson: JSON.stringify(input.contentJson) })
+      return changed.changes === 0 ? undefined : this.find(input.documentId)
     },
     search(projectId, query) {
       const pattern = `%${query.toLocaleLowerCase()}%`
