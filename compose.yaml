@@ -1,0 +1,11 @@
+services:
+  scr:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "${SCR_PORT:-3000}:3000"
+    volumes:
+      - scr-data:/data
+
+volumes:
+  scr-data:

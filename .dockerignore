@@ -1,0 +1,9 @@
+.git
+.worktrees
+.superpowers
+node_modules
+**/node_modules
+**/dist
+test-results
+playwright-report
+*.sqlite*

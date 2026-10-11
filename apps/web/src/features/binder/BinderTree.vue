@@ -70,6 +70,7 @@ function selectItem(item: BinderItemDto): void {
   if (store.activeItemId !== item.id && !unsavedGuard.canTransition()) return
   store.activeItemId = item.id
   focusedId.value = item.id
+  store.activePanel = 'editor'
 }
 
 function toggle(item: BinderItemDto, expand?: boolean): void {
@@ -182,6 +183,7 @@ async function add(kind: 'folder' | 'document'): Promise<void> {
   const parentId = parentForNewItem()
   if (parentId) expandedIds.value = new Set(expandedIds.value).add(parentId)
   await store.createItem(kind, parentId)
+  store.activePanel = 'editor'
   if (store.activeItemId) {
     editingId.value = store.activeItemId
     await focusItem(store.activeItemId)
