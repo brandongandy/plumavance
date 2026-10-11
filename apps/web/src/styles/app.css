@@ -506,6 +506,99 @@ button {
   font-size: 12px;
 }
 
+.snapshot-list {
+  height: 100%;
+  overflow: auto;
+}
+
+.snapshot-list-toolbar {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: flex-end;
+  border-bottom: 1px solid var(--color-border);
+  padding: 2px 6px;
+}
+
+.snapshot-list-toolbar button {
+  min-height: 30px;
+  padding: 0 6px;
+  color: var(--color-focus);
+  font-size: 11px;
+}
+
+.snapshot-row {
+  border-bottom: 1px solid var(--color-border);
+  padding: 8px;
+}
+
+.snapshot-row strong,
+.snapshot-row span {
+  display: block;
+}
+
+.snapshot-row strong {
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-row span {
+  margin-top: 2px;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.snapshot-actions {
+  display: flex;
+  margin-top: 5px;
+}
+
+.snapshot-actions button {
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  color: var(--color-muted);
+}
+
+.snapshot-empty,
+.snapshot-warning {
+  margin: 12px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.snapshot-warning {
+  margin: 0 0 12px;
+  color: var(--color-warning);
+}
+
+.snapshot-preview,
+.snapshot-comparison {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--color-text-soft);
+  font-family: var(--font-prose);
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.snapshot-preview {
+  margin: 0;
+}
+
+.snapshot-comparison ins {
+  background: color-mix(in srgb, var(--color-success) 24%, transparent);
+  text-decoration: none;
+}
+
+.snapshot-comparison del {
+  background: color-mix(in srgb, var(--color-danger) 20%, transparent);
+}
+
 .workspace-inspector-content {
   height: 100%;
 }

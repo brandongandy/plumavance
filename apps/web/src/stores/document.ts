@@ -1,9 +1,10 @@
-import type { DocumentDto, EditorDocument, SaveDocumentRequest } from '@scr/shared'
+import type { DocumentDto, EditorDocument, SaveDocumentRequest, SnapshotDto } from '@scr/shared'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { ApiRequestError } from '../api/client.js'
 import { documentApi } from '../api/documents.js'
+import { snapshotApi } from '../api/snapshots.js'
 import { countText, editorText } from '../features/editor/counts.js'
 
 export type SaveState = 'saved' | 'unsaved' | 'saving' | 'failed' | 'conflict'
@@ -45,6 +46,7 @@ export const useDocumentStore = defineStore('document', () => {
   const conflict = ref<ConflictMetadata | null>(null)
   const errorMessage = ref('')
   const loading = ref(false)
+  const snapshots = ref<SnapshotDto[]>([])
   let loadSequence = 0
 
   const isDirty = computed(() => {
@@ -91,6 +93,7 @@ export const useDocumentStore = defineStore('document', () => {
       const document = await documentApi.get(id)
       if (sequence !== loadSequence) return false
       applyServerDocument(document)
+      void loadSnapshots()
       return true
     } catch (error) {
       if (sequence === loadSequence) {
@@ -116,6 +119,50 @@ export const useDocumentStore = defineStore('document', () => {
     conflict.value = null
     errorMessage.value = ''
     loading.value = false
+    snapshots.value = []
+  }
+
+  async function loadSnapshots(): Promise<void> {
+    if (!documentId.value) {
+      snapshots.value = []
+      return
+    }
+    try {
+      snapshots.value = await snapshotApi.list(documentId.value)
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : 'Snapshots could not be loaded.'
+    }
+  }
+
+  async function takeSnapshot(name: string): Promise<boolean> {
+    if (!documentId.value || isDirty.value) return false
+    const trimmed = name.trim()
+    const snapshot = await snapshotApi.create(documentId.value, trimmed || undefined)
+    snapshots.value = [snapshot, ...snapshots.value]
+    return true
+  }
+
+  async function renameSnapshot(snapshotId: string, name: string): Promise<void> {
+    const renamed = await snapshotApi.rename(snapshotId, name.trim())
+    snapshots.value = snapshots.value.map((snapshot) =>
+      snapshot.id === renamed.id ? renamed : snapshot,
+    )
+  }
+
+  async function restoreSnapshot(snapshotId: string): Promise<boolean> {
+    if (isDirty.value) return false
+    try {
+      applyServerDocument(await snapshotApi.restore(snapshotId, revision.value))
+      return true
+    } catch (error) {
+      errorMessage.value = error instanceof Error ? error.message : 'The snapshot could not be restored.'
+      return false
+    }
+  }
+
+  async function deleteSnapshot(snapshotId: string): Promise<void> {
+    await snapshotApi.delete(snapshotId)
+    snapshots.value = snapshots.value.filter((snapshot) => snapshot.id !== snapshotId)
   }
 
   function setTitle(value: string): void {
@@ -209,6 +256,7 @@ export const useDocumentStore = defineStore('document', () => {
     conflict,
     errorMessage,
     loading,
+    snapshots,
     load,
     clear,
     setTitle,
@@ -217,5 +265,10 @@ export const useDocumentStore = defineStore('document', () => {
     save,
     reloadServerCopy,
     keepMine,
+    loadSnapshots,
+    takeSnapshot,
+    renameSnapshot,
+    restoreSnapshot,
+    deleteSnapshot,
   }
 })
