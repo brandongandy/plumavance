@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 
 import DocumentNotes from './DocumentNotes.vue'
+import SnapshotList from './SnapshotList.vue'
 
 defineProps<{ notes: string; hasDocument: boolean }>()
 const emit = defineEmits<{ 'update:notes': [value: string] }>()
@@ -41,7 +42,7 @@ const activeTab = ref<'notes' | 'snapshots'>('notes')
       <p v-else>No document selected.</p>
     </div>
     <div v-else id="snapshots-panel" role="tabpanel" aria-labelledby="snapshots-tab" class="inspector-panel">
-      <p v-if="hasDocument">No snapshots.</p>
+      <SnapshotList v-if="hasDocument" />
       <p v-else>No document selected.</p>
     </div>
   </aside>
