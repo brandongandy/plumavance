@@ -5,6 +5,14 @@ import { requestCompile } from '../../api/compile.js'
 
 function responseFilename(response: Response, fallback: string): string {
   const disposition = response.headers.get('content-disposition') ?? ''
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded)
+    } catch {
+      // Fall through to the ASCII filename.
+    }
+  }
   const match = disposition.match(/filename="?([^";]+)"?/i)
   return match?.[1] ?? fallback
 }

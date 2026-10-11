@@ -7,6 +7,8 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import DocumentEditor from '../src/features/editor/DocumentEditor.vue'
 import SaveStatus from '../src/features/editor/SaveStatus.vue'
+import { documentApi } from '../src/api/documents.js'
+import { snapshotApi } from '../src/api/snapshots.js'
 import { countText, editorText } from '../src/features/editor/counts.js'
 import { documentExtensions } from '../src/features/editor/documentExtensions.js'
 import { useDocumentStore } from '../src/stores/document.js'
@@ -202,6 +204,51 @@ describe('document editor state', () => {
     failSave = false
     await store.save()
     expect(store.saveState).toBe('saved')
+  })
+
+  test('ignores_a_save_response_after_another_document_has_loaded', async () => {
+    setActivePinia(createPinia())
+    let resolveSave: ((document: DocumentDto) => void) | undefined
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    vi.spyOn(documentApi, 'get')
+      .mockResolvedValueOnce(documentFixture({ id: firstId }))
+      .mockResolvedValueOnce(documentFixture({ id: secondId, title: 'Second', revision: 7 }))
+    vi.spyOn(documentApi, 'save').mockImplementation(() => new Promise((resolve) => { resolveSave = resolve }))
+    const store = useDocumentStore()
+
+    await store.load(firstId)
+    store.setTitle('Delayed title')
+    const saving = store.save()
+    await store.load(secondId, () => true)
+    resolveSave?.(documentFixture({ id: firstId, title: 'Delayed title', revision: 1 }))
+    await saving
+
+    expect(store.documentId).toBe(secondId)
+    expect(store.title).toBe('Second')
+    expect(store.revision).toBe(7)
+    expect(store.saveState).toBe('saved')
+  })
+
+  test('ignores_a_late_snapshot_list_from_the_previous_document', async () => {
+    setActivePinia(createPinia())
+    let resolveFirst: ((snapshots: Awaited<ReturnType<typeof snapshotApi.list>>) => void) | undefined
+    vi.spyOn(documentApi, 'get').mockImplementation(async (id) =>
+      documentFixture({ id, title: id === firstId ? 'First' : 'Second' }),
+    )
+    vi.spyOn(snapshotApi, 'list').mockImplementation((id) => {
+      if (id === firstId) return new Promise((resolve) => { resolveFirst = resolve })
+      return Promise.resolve([{ id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', documentId: secondId, name: 'Second snapshot', contentJson: emptyContent, contentText: '', createdAt: '2026-10-10T00:00:00.000Z' }])
+    })
+    const store = useDocumentStore()
+
+    await store.load(firstId)
+    await store.load(secondId)
+    await vi.waitFor(() => expect(store.snapshots.map((snapshot) => snapshot.name)).toEqual(['Second snapshot']))
+    resolveFirst?.([{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', documentId: firstId, name: 'First snapshot', contentJson: emptyContent, contentText: '', createdAt: '2026-10-10T00:00:00.000Z' }])
+    await flushPromises()
+
+    expect(store.documentId).toBe(secondId)
+    expect(store.snapshots.map((snapshot) => snapshot.name)).toEqual(['Second snapshot'])
   })
 
   test('renders_the_formatting_controls_and_emits_the_explicit_save_shortcut', async () => {
