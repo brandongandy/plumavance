@@ -6,6 +6,9 @@ import { registerBinderRoutes } from './binder/routes.js'
 import { createBinderService } from './binder/service.js'
 import { openDatabase } from './db/client.js'
 import { runMigrations } from './db/migrate.js'
+import { createDocumentRepository } from './documents/repository.js'
+import { registerDocumentRoutes } from './documents/routes.js'
+import { createDocumentService } from './documents/service.js'
 import { ApiError } from './http/errors.js'
 import { createProjectRepository } from './projects/repository.js'
 import { registerProjectRoutes } from './projects/routes.js'
@@ -25,12 +28,20 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   const binderRepository = createBinderRepository(database)
   const projectService = createProjectService(projectRepository, clock)
   const binderService = createBinderService(binderRepository, projectRepository, clock)
+  const documentRepository = createDocumentRepository(database)
+  const documentService = createDocumentService(
+    documentRepository,
+    projectRepository,
+    binderService,
+    clock,
+  )
 
   const app = Fastify({ logger: false })
 
   app.get('/api/health', async () => ({ status: 'ok' as const }))
   registerProjectRoutes(app, projectService, binderService)
   registerBinderRoutes(app, binderService)
+  registerDocumentRoutes(app, documentService)
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ApiError) {
