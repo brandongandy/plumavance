@@ -2,8 +2,13 @@
 import Button from 'primevue/button'
 import { useRouter } from 'vue-router'
 
-defineProps<{ projectName: string; binderOpen: boolean; inspectorOpen: boolean }>()
-const emit = defineEmits<{ toggleBinder: []; toggleInspector: [] }>()
+defineProps<{
+  projectName: string
+  binderOpen: boolean
+  inspectorOpen: boolean
+  saveDisabled: boolean
+}>()
+const emit = defineEmits<{ toggleBinder: []; toggleInspector: []; save: [] }>()
 const router = useRouter()
 </script>
 
@@ -28,7 +33,15 @@ const router = useRouter()
       class="workspace-icon-button"
       @click="emit('toggleBinder')"
     />
-    <Button label="Save" icon="pi pi-save" text disabled class="workspace-toolbar-button" />
+    <Button
+      label="Save"
+      icon="pi pi-save"
+      text
+      aria-label="Save document"
+      :disabled="saveDisabled"
+      class="workspace-toolbar-button"
+      @click="emit('save')"
+    />
     <Button label="Compile" icon="pi pi-file-export" text disabled class="workspace-toolbar-button" />
     <Button label="Focus" icon="pi pi-expand" text disabled class="workspace-toolbar-button" />
     <Button

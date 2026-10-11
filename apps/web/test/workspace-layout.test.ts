@@ -2,7 +2,7 @@ import axeCore from 'axe-core'
 import PrimeVue from 'primevue/config'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import WorkspaceView from '../src/views/WorkspaceView.vue'
@@ -58,7 +58,7 @@ async function mountWorkspace(width = 1280): Promise<VueWrapper> {
   })
   await router.push(`/projects/${projectId}`)
   await router.isReady()
-  const wrapper = mount(WorkspaceView, {
+  const wrapper = mount(RouterView, {
     attachTo: document.body,
     global: { plugins: [router, createPinia(), [PrimeVue, { unstyled: true }]] },
   })
