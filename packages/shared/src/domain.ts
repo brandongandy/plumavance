@@ -25,3 +25,50 @@ export interface ProjectDetailDto {
   items: BinderItemDto[]
   trashedItems: BinderItemDto[]
 }
+
+export type EditorNodeType =
+  | 'doc'
+  | 'paragraph'
+  | 'heading'
+  | 'text'
+  | 'blockquote'
+  | 'bulletList'
+  | 'orderedList'
+  | 'listItem'
+  | 'horizontalRule'
+  | 'hardBreak'
+
+export type EditorMarkType = 'bold' | 'italic' | 'underline' | 'strike'
+
+export interface EditorMark {
+  type: EditorMarkType
+}
+
+export interface EditorNode {
+  type: EditorNodeType
+  attrs?: Record<string, string | number | boolean | null>
+  content?: EditorNode[]
+  marks?: EditorMark[]
+  text?: string
+}
+
+export interface EditorDocument extends EditorNode {
+  type: 'doc'
+}
+
+export interface DocumentDto {
+  id: string
+  projectId: string
+  title: string
+  contentJson: EditorDocument
+  contentText: string
+  notesText: string
+  revision: number
+  savedAt: string
+}
+
+export interface SearchResultDto {
+  id: string
+  title: string
+  excerpt: string
+}
