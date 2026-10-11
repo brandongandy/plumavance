@@ -1,4 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify'
+import fastifyStatic from '@fastify/static'
 import { ZodError } from 'zod'
 
 import { createBinderRepository } from './binder/repository.js'
@@ -59,6 +60,16 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   registerSnapshotRoutes(app, snapshotService)
   registerCompileRoutes(app, compileService)
 
+  if (options.staticRoot) {
+    await app.register(fastifyStatic, { root: options.staticRoot, wildcard: false })
+    app.setNotFoundHandler((request, reply) => {
+      if (request.url.startsWith('/api/')) {
+        return reply.status(404).send({ code: 'NOT_FOUND', message: 'Route not found.' })
+      }
+      return reply.sendFile('index.html')
+    })
+  }
+
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ApiError) {
       return reply.status(error.statusCode).send({
@@ -83,6 +94,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   })
 
   app.addHook('onClose', async () => {
+    database.pragma('wal_checkpoint(TRUNCATE)')
     database.close()
   })
 

@@ -8,6 +8,7 @@ const EnvironmentSchema = z.object({
   DATA_DIR: z.string().trim().min(1).default('/data'),
   HOST: z.string().trim().min(1).default('0.0.0.0'),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+  STATIC_ROOT: z.string().trim().min(1).default('/app/public'),
 })
 
 export interface AppConfig {
@@ -15,6 +16,7 @@ export interface AppConfig {
   databasePath: string
   host: string
   port: number
+  staticRoot: string
 }
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -25,6 +27,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     databasePath: resolve(dataDirectory, 'scr.sqlite'),
     host: parsed.HOST,
     port: parsed.PORT,
+    staticRoot: resolve(parsed.STATIC_ROOT),
   }
 }
 
