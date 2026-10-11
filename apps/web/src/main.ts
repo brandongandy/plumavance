@@ -1,5 +1,29 @@
+import '@fontsource/ibm-plex-sans/latin-400.css'
+import '@fontsource/ibm-plex-sans/latin-500.css'
+import '@fontsource/ibm-plex-sans/latin-600.css'
+import '@fontsource/ibm-plex-mono/latin-400.css'
+import '@fontsource/literata/latin-400.css'
+import './styles/app.css'
+
+import Aura from '@primeuix/themes/aura'
+import { createPinia } from 'pinia'
+import PrimeVue from 'primevue/config'
 import { createApp } from 'vue'
 
 import App from './App.vue'
+import { router } from './router.js'
 
-createApp(App).mount('#app')
+const app = createApp(App)
+app.use(createPinia())
+app.use(router)
+app.use(PrimeVue, {
+  theme: {
+    preset: Aura,
+    options: {
+      darkModeSelector: '.scr-dark',
+      cssLayer: { name: 'primevue', order: 'theme, base, primevue' },
+    },
+  },
+})
+document.documentElement.classList.add('scr-dark')
+app.mount('#app')

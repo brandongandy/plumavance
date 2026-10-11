@@ -1,0 +1,17 @@
+:root {
+  color-scheme: dark;
+  --color-app: #1a2a38;
+  --color-chrome: #263849;
+  --color-editor: #2d4354;
+  --color-border: #40576b;
+  --color-muted: #a8b6c0;
+  --color-text: #e4e6e0;
+  --color-text-soft: #d8dad3;
+  --color-focus: #40abe5;
+  --color-success: #3fa89d;
+  --color-warning: #ce8900;
+  --color-danger: #f6606d;
+  --font-ui: 'IBM Plex Sans', sans-serif;
+  --font-prose: 'Literata', serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}

@@ -1,0 +1,53 @@
+@import 'tailwindcss';
+@import 'primeicons/primeicons.css';
+@import './theme.css';
+
+@theme {
+  --font-sans: var(--font-ui);
+  --font-serif: var(--font-prose);
+  --font-mono: var(--font-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-app);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  border-radius: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-focus) 38%, transparent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
