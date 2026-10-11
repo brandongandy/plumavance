@@ -72,3 +72,12 @@ export interface SearchResultDto {
   title: string
   excerpt: string
 }
+
+export interface SnapshotDto {
+  id: string
+  documentId: string
+  name: string | null
+  contentJson: EditorDocument
+  contentText: string
+  createdAt: string
+}

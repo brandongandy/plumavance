@@ -13,6 +13,9 @@ import { ApiError } from './http/errors.js'
 import { createProjectRepository } from './projects/repository.js'
 import { registerProjectRoutes } from './projects/routes.js'
 import { createProjectService } from './projects/service.js'
+import { createSnapshotRepository } from './snapshots/repository.js'
+import { registerSnapshotRoutes } from './snapshots/routes.js'
+import { createSnapshotService } from './snapshots/service.js'
 
 export interface CreateAppOptions {
   databasePath: string
@@ -35,6 +38,8 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     binderService,
     clock,
   )
+  const snapshotRepository = createSnapshotRepository(database)
+  const snapshotService = createSnapshotService(snapshotRepository, documentRepository, clock)
 
   const app = Fastify({ logger: false })
 
@@ -42,6 +47,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   registerProjectRoutes(app, projectService, binderService)
   registerBinderRoutes(app, binderService)
   registerDocumentRoutes(app, documentService)
+  registerSnapshotRoutes(app, snapshotService)
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ApiError) {
