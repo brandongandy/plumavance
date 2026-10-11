@@ -15,6 +15,8 @@ import { useCompile } from '../features/compile/useCompile.js'
 import DocumentEditor from '../features/editor/DocumentEditor.vue'
 import DocumentHeader from '../features/editor/DocumentHeader.vue'
 import SaveStatus from '../features/editor/SaveStatus.vue'
+import FocusExitButton from '../features/focus/FocusExitButton.vue'
+import { useFocusMode } from '../features/focus/useFocusMode.js'
 import InspectorPane from '../features/inspector/InspectorPane.vue'
 import { useDocumentStore } from '../stores/document.js'
 import { useWorkspaceStore, type WorkspacePanel } from '../stores/workspace.js'
@@ -28,6 +30,8 @@ const unsavedGuard = useUnsavedGuard(() => documentStore.isDirty)
 const compileTask = useCompile()
 const compileVisible = ref(false)
 const compileTrigger = ref<HTMLElement | null>(null)
+const workspaceRoot = ref<HTMLElement | null>(null)
+const focusMode = useFocusMode(workspaceRoot)
 const layout = ref<WorkspaceLayout>(layoutForWidth(window.innerWidth))
 
 const folderChildren = computed(() => {
@@ -123,7 +127,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
 </script>
 
 <template>
-  <div class="workspace-shell">
+  <div ref="workspaceRoot" class="workspace-shell" :class="{ 'is-focus-mode': focusMode.isActive.value }">
     <AppToolbar
       :project-name="store.project?.name ?? 'Opening project…'"
       :binder-open="layout === 'desktop' ? store.binderOpen : store.activePanel === 'binder'"
@@ -133,6 +137,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
       @toggle-inspector="toggleInspector"
       @save="saveDocument"
       @compile="openCompile"
+      @focus="focusMode.enter"
     />
 
     <p v-if="store.loading" role="status" class="workspace-message">Opening project…</p>
@@ -165,6 +170,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
               />
               <DocumentEditor
                 :model-value="documentStore.contentJson"
+                :focus-mode="focusMode.isActive.value"
                 @update:model-value="documentStore.setContent"
                 @save="saveDocument"
               />
@@ -202,5 +208,6 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
       @save="saveDocument"
       @compile="runCompile"
     />
+    <FocusExitButton v-if="focusMode.isActive.value" @exit="focusMode.exit" />
   </div>
 </template>

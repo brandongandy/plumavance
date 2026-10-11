@@ -8,7 +8,7 @@ defineProps<{
   inspectorOpen: boolean
   saveDisabled: boolean
 }>()
-const emit = defineEmits<{ toggleBinder: []; toggleInspector: []; save: []; compile: [event: Event] }>()
+const emit = defineEmits<{ toggleBinder: []; toggleInspector: []; save: []; compile: [event: Event]; focus: [] }>()
 const router = useRouter()
 </script>
 
@@ -43,7 +43,7 @@ const router = useRouter()
       @click="emit('save')"
     />
     <Button label="Compile" icon="pi pi-file-export" text class="workspace-toolbar-button" @click="emit('compile', $event)" />
-    <Button label="Focus" icon="pi pi-expand" text disabled class="workspace-toolbar-button" />
+    <Button label="Focus" icon="pi pi-expand" text class="workspace-toolbar-button" @click="emit('focus')" />
     <Button
       icon="pi pi-info-circle"
       text

@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { EditorDocument } from '@scr/shared'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
-import { onBeforeUnmount, watch } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 
+import { useTypewriterScroll } from '../focus/useTypewriterScroll.js'
 import { documentExtensions } from './documentExtensions.js'
 import EditorToolbar from './EditorToolbar.vue'
 
-const props = defineProps<{ modelValue: EditorDocument; readonly?: boolean }>()
+const props = defineProps<{ modelValue: EditorDocument; readonly?: boolean; focusMode?: boolean }>()
 const emit = defineEmits<{
   'update:modelValue': [value: EditorDocument]
   save: []
@@ -26,6 +27,10 @@ const editor = useEditor({
   onUpdate: ({ editor: currentEditor }) => {
     emit('update:modelValue', currentEditor.getJSON() as EditorDocument)
   },
+})
+const scrollContainer = ref<HTMLElement | null>(null)
+const typewriter = useTypewriterScroll(scrollContainer, {
+  reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
 })
 
 watch(
@@ -49,13 +54,21 @@ function handleKeydown(event: KeyboardEvent): void {
   }
 }
 
+function handleKeyup(event: KeyboardEvent): void {
+  if (!props.focusMode || event.metaKey || event.ctrlKey || event.altKey) return
+  const node = window.getSelection()?.anchorNode
+  const element = node instanceof HTMLElement ? node : node?.parentElement
+  const block = element?.closest<HTMLElement>('p, h1, h2, h3, blockquote, li')
+  if (block) typewriter.onKeyboardEdit(block)
+}
+
 onBeforeUnmount(() => editor.value?.destroy())
 </script>
 
 <template>
-  <div data-document-editor class="document-editor" @keydown="handleKeydown">
+  <div data-document-editor class="document-editor" @keydown="handleKeydown" @keyup="handleKeyup">
     <EditorToolbar :editor="editor ?? null" />
-    <div class="document-scroll">
+    <div ref="scrollContainer" class="document-scroll" @wheel.passive="typewriter.noteManualScroll" @pointerdown="typewriter.noteManualScroll">
       <EditorContent v-if="editor" :editor="editor!" />
     </div>
   </div>

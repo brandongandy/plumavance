@@ -706,6 +706,49 @@ button {
   }
 }
 
+.focus-exit-button {
+  position: fixed;
+  z-index: 20;
+  top: 12px;
+  right: 12px;
+  min-height: 36px;
+  background: var(--color-chrome);
+  color: var(--color-text);
+  opacity: 0.18;
+  transition: opacity 120ms ease;
+}
+
+.focus-exit-button:hover,
+.focus-exit-button:focus-visible {
+  opacity: 1;
+}
+
+.workspace-shell.is-focus-mode > header,
+.workspace-shell.is-focus-mode > footer,
+.workspace-shell.is-focus-mode > .mobile-panel-switcher,
+.workspace-shell.is-focus-mode .workspace-binder,
+.workspace-shell.is-focus-mode .workspace-inspector,
+.workspace-shell.is-focus-mode .pane-resizer,
+.workspace-shell.is-focus-mode .document-header,
+.workspace-shell.is-focus-mode .save-status,
+.workspace-shell.is-focus-mode .editor-toolbar {
+  display: none !important;
+}
+
+.workspace-shell.is-focus-mode .workspace-panes {
+  display: block;
+}
+
+.workspace-shell.is-focus-mode .workspace-editor {
+  display: block !important;
+  width: 100%;
+  height: 100%;
+}
+
+.workspace-shell.is-focus-mode .document-scroll {
+  padding-inline: max(24px, calc((100% - 68ch) / 2));
+}
+
 .workspace-inspector-content {
   height: 100%;
 }
