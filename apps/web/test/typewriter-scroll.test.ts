@@ -1,9 +1,15 @@
 import { ref } from 'vue'
 import { describe, expect, test, vi } from 'vitest'
+import { readFile } from 'node:fs/promises'
 
 import { useTypewriterScroll } from '../src/features/focus/useTypewriterScroll.js'
 
 describe('typewriter scrolling', () => {
+  test('focus_mode_css_provides_scroll_space_at_both_document_boundaries', async () => {
+    const css = await readFile('src/styles/app.css', 'utf8')
+    expect(css).toMatch(/\.workspace-shell\.is-focus-mode \.document-scroll[\s\S]*padding-block:\s*50vh/)
+  })
+
   test('centers_the_active_block_and_uses_immediate_motion_when_reduced', () => {
     const container = document.createElement('div')
     const target = document.createElement('p')

@@ -10,6 +10,7 @@ const props = defineProps<{
   expanded?: boolean
   hasChildren: boolean
   editing: boolean
+  dropPosition?: 'before' | 'inside' | 'after' | undefined
 }>()
 const emit = defineEmits<{
   select: [item: BinderItemDto]
@@ -17,7 +18,11 @@ const emit = defineEmits<{
   rename: [item: BinderItemDto, title: string]
   cancelRename: []
   dragStart: [event: DragEvent, item: BinderItemDto]
+  dragEnd: []
+  dragOver: [event: DragEvent, item: BinderItemDto]
+  dragLeave: [item: BinderItemDto]
   drop: [event: DragEvent, item: BinderItemDto]
+  toggle: [item: BinderItemDto]
 }>()
 
 const title = ref(props.item.title)
@@ -51,18 +56,29 @@ function submitRename(): void {
     :tabindex="focused ? 0 : -1"
     :data-item-id="item.id"
     class="binder-tree-row"
-    :class="{ 'is-selected': selected }"
+    :class="{ 'is-selected': selected, [`is-drop-${dropPosition}`]: Boolean(dropPosition) }"
     draggable="true"
     @click="emit('select', item)"
     @keydown="emit('keydown', $event, item)"
     @dragstart="emit('dragStart', $event, item)"
-    @dragover.prevent
+    @dragend="emit('dragEnd')"
+    @dragover.prevent="emit('dragOver', $event, item)"
+    @dragleave="emit('dragLeave', item)"
     @drop="emit('drop', $event, item)"
   >
+    <button
+      v-if="item.kind === 'folder'"
+      type="button"
+      class="binder-disclosure"
+      :aria-label="`${expanded ? 'Collapse' : 'Expand'} ${item.title}`"
+      @click.stop="emit('toggle', item)"
+    ><i aria-hidden="true" :class="expanded ? 'pi pi-chevron-down' : 'pi pi-chevron-right'" /></button>
     <i
+      v-if="item.kind === 'folder'"
       aria-hidden="true"
-      :class="item.kind === 'folder' ? (expanded ? 'pi pi-folder-open' : 'pi pi-folder') : 'pi pi-file'"
+      :class="expanded ? 'pi pi-folder-open' : 'pi pi-folder'"
     />
+    <i v-else aria-hidden="true" class="pi pi-file" />
     <input
       v-if="editing"
       ref="renameInput"

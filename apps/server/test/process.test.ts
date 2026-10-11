@@ -11,4 +11,11 @@ describe('compile process runner', () => {
     await expect(runProcess(process.execPath, ['-e', 'process.exit(7)'])).rejects.toThrow('exited with code 7')
     await expect(runProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { timeoutMs: 20 })).rejects.toThrow('timed out')
   })
+
+  test('terminates_a_running_process_when_aborted', async () => {
+    const controller = new AbortController()
+    const running = runProcess(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { signal: controller.signal })
+    controller.abort(new Error('Client disconnected.'))
+    await expect(running).rejects.toThrow('Client disconnected')
+  })
 })

@@ -7,15 +7,15 @@ import { renderCompileHtml, sanitizeFilename } from './render-html.js'
 import { resolveCompileSelection } from './selection.js'
 
 export interface CompileService {
-  compile(projectId: string, request: CompileRequest): Promise<CompileArtifact>
+  compile(projectId: string, request: CompileRequest, signal?: AbortSignal): Promise<CompileArtifact>
 }
 
 export function createCompileService(binder: BinderService, documents: DocumentRepository, converters: ConverterSet): CompileService {
   return {
-    async compile(projectId, request) {
+    async compile(projectId, request, signal) {
       const selected = resolveCompileSelection(binder.listProject(projectId).items, request.itemIds, (id) => documents.find(id))
       const html = renderCompileHtml(selected, request)
-      return converters.convert({ html, format: request.format, filename: sanitizeFilename(request.filename, request.format) })
+      return converters.convert({ html, format: request.format, filename: sanitizeFilename(request.filename, request.format) }, signal)
     },
   }
 }

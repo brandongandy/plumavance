@@ -18,6 +18,7 @@ const editingId = ref<string | null>(null)
 const query = ref('')
 const draggedId = ref<string | null>(null)
 const pendingDeleteId = ref<string | null>(null)
+const dropTarget = ref<{ id: string; position: 'before' | 'inside' | 'after' } | null>(null)
 const initializedFromProject = ref(false)
 const { moveByPointer, moveByKeyboard } = useBinderMove((intent) => store.moveItem(intent))
 
@@ -196,10 +197,6 @@ async function trashSelected(): Promise<void> {
 }
 
 async function runSearch(): Promise<void> {
-  if (!query.value.trim() || store.items.some((item) => item.title.toLocaleLowerCase().includes(query.value.trim().toLocaleLowerCase()))) {
-    store.searchResults = []
-    return
-  }
   await store.search(query.value)
 }
 
@@ -209,11 +206,36 @@ function handleDragStart(event: DragEvent, item: BinderItemDto): void {
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
 }
 
+function pointerDropPosition(event: DragEvent, target: BinderItemDto): 'before' | 'inside' | 'after' {
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const ratio = rect.height ? (event.clientY - rect.top) / rect.height : 0.5
+  if (target.kind === 'folder' && ratio >= 0.25 && ratio <= 0.75) return 'inside'
+  return ratio < 0.5 ? 'before' : 'after'
+}
+
+function handleDragOver(event: DragEvent, target: BinderItemDto): void {
+  dropTarget.value = { id: target.id, position: pointerDropPosition(event, target) }
+}
+
 async function handleDrop(event: DragEvent, target: BinderItemDto): Promise<void> {
   const itemId = event.dataTransfer?.getData('text/plain') || draggedId.value
   if (!itemId || itemId === target.id) return
-  await moveByPointer(itemId, target.parentId, siblingIndex(target))
+  const position = pointerDropPosition(event, target)
+  if (position === 'inside') {
+    const index = childrenOf(target.id).filter((item) => item.id !== itemId).length
+    await moveByPointer(itemId, target.id, index)
+    expandedIds.value = new Set(expandedIds.value).add(target.id)
+  } else {
+    const siblings = childrenOf(target.parentId).filter((item) => item.id !== itemId)
+    const targetIndex = siblings.findIndex((item) => item.id === target.id)
+    await moveByPointer(itemId, target.parentId, targetIndex + (position === 'after' ? 1 : 0))
+  }
   draggedId.value = null
+  dropTarget.value = null
+}
+
+async function restore(itemId: string): Promise<void> {
+  if (unsavedGuard.canTransition()) await store.restoreItem(itemId)
 }
 </script>
 
@@ -244,13 +266,18 @@ async function handleDrop(event: DragEvent, target: BinderItemDto): Promise<void
         :expanded="expandedIds.has(item.id)"
         :has-children="hasChildren(item)"
         :editing="editingId === item.id"
+        :drop-position="dropTarget?.id === item.id ? dropTarget.position : undefined"
         :style="{ '--tree-level': levelOf(item) }"
         @select="selectItem"
         @keydown="handleKeydown"
         @rename="rename"
         @cancel-rename="editingId = null"
         @drag-start="handleDragStart"
+        @drag-end="dropTarget = null; draggedId = null"
+        @drag-over="handleDragOver"
+        @drag-leave="dropTarget = null"
         @drop="handleDrop"
+        @toggle="toggle"
       />
 
       <div class="binder-trash">
@@ -264,7 +291,7 @@ async function handleDrop(event: DragEvent, target: BinderItemDto): Promise<void
             icon="pi pi-replay"
             text
             :aria-label="`Restore ${item.title}`"
-            @click="store.restoreItem(item.id)"
+            @click="restore(item.id)"
           />
           <Button
             v-if="pendingDeleteId !== item.id"

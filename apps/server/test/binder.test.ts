@@ -139,4 +139,17 @@ describe('binder routes', () => {
       { title: 'Inner', parentId: outer.id, position: 0 },
     ])
   })
+
+  test('does_not_allow_document_titles_to_bypass_the_document_revision_contract', async () => {
+    const document = await createItem('document', 'Original')
+    const folder = await createItem('folder', 'Old folder')
+
+    const rejected = await app.inject({ method: 'PATCH', url: `/api/items/${document.id}`, payload: { title: 'Bypass' } })
+    const renamedFolder = await app.inject({ method: 'PATCH', url: `/api/items/${folder.id}`, payload: { title: 'New folder' } })
+
+    expect(rejected.statusCode).toBe(409)
+    expect(rejected.json()).toMatchObject({ code: 'DOCUMENT_RENAME_REQUIRES_SAVE' })
+    expect(renamedFolder.statusCode).toBe(200)
+    expect(renamedFolder.json()).toMatchObject({ title: 'New folder' })
+  })
 })

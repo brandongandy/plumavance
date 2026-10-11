@@ -3,7 +3,9 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
 import { binderApi, type MoveItemInput } from '../api/binder.js'
+import { documentApi } from '../api/documents.js'
 import { applyMove } from '../features/binder/useBinderMove.js'
+import { useDocumentStore } from './document.js'
 
 export type WorkspacePanel = 'binder' | 'editor' | 'inspector'
 
@@ -55,6 +57,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const activePanel = ref<WorkspacePanel>('editor')
   const loading = ref(false)
   const errorMessage = ref('')
+  let searchSequence = 0
 
   const activeItem = computed(() => items.value.find((item) => item.id === activeItemId.value) ?? null)
 
@@ -104,8 +107,31 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function renameItem(id: string, title: string): Promise<void> {
-    const renamed = await binderApi.rename(id, title.trim())
-    items.value = items.value.map((item) => (item.id === id ? renamed : item))
+    const item = items.value.find((candidate) => candidate.id === id)
+    const trimmed = title.trim()
+    if (!item || !trimmed) return
+    if (item.kind === 'folder') {
+      const renamed = await binderApi.rename(id, trimmed)
+      items.value = items.value.map((candidate) => (candidate.id === id ? renamed : candidate))
+      return
+    }
+
+    const documents = useDocumentStore()
+    let saved = false
+    if (documents.documentId === id) {
+      documents.setTitle(trimmed)
+      saved = await documents.save()
+    } else {
+      const current = await documentApi.get(id)
+      await documentApi.save(id, {
+        title: trimmed,
+        contentJson: current.contentJson,
+        notesText: current.notesText,
+        expectedRevision: current.revision,
+      })
+      saved = true
+    }
+    if (saved) items.value = items.value.map((candidate) => candidate.id === id ? { ...candidate, title: trimmed } : candidate)
   }
 
   async function moveItem(intent: MoveItemInput): Promise<void> {
@@ -141,10 +167,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function restoreItem(id: string): Promise<void> {
-    const restored = await binderApi.restore(id)
+    const selected = activeItemId.value
+    await binderApi.restore(id)
     trashedItems.value = trashedItems.value.filter((item) => item.id !== id)
-    await load(projectId.value)
-    activeItemId.value = restored.id
+    const detail = await binderApi.getProject(projectId.value)
+    project.value = detail.project
+    items.value = detail.items
+    trashedItems.value = detail.trashedItems
+    activeItemId.value = selected && detail.items.some((item) => item.id === selected)
+      ? selected
+      : detail.items.find((item) => item.kind === 'document')?.id ?? detail.items[0]?.id ?? null
   }
 
   async function deleteItem(id: string): Promise<void> {
@@ -153,9 +185,18 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function search(query: string): Promise<void> {
-    searchResults.value = query.trim()
-      ? await binderApi.search(projectId.value, query.trim())
-      : []
+    const normalized = query.trim()
+    const sequence = ++searchSequence
+    if (!normalized) {
+      searchResults.value = []
+      return
+    }
+    try {
+      const results = await binderApi.search(projectId.value, normalized)
+      if (sequence === searchSequence) searchResults.value = results
+    } catch (error) {
+      if (sequence === searchSequence) errorMessage.value = errorText(error, 'Search failed.')
+    }
   }
 
   function setBinderWidth(width: number): void {

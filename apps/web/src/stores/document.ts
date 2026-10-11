@@ -49,6 +49,9 @@ export const useDocumentStore = defineStore('document', () => {
   const snapshots = ref<SnapshotDto[]>([])
   let loadSequence = 0
 
+  const isCurrent = (id: string, sequence: number): boolean =>
+    documentId.value === id && loadSequence === sequence
+
   const isDirty = computed(() => {
     const saved = savedBuffer.value
     if (!saved || !documentId.value) return false
@@ -89,11 +92,12 @@ export const useDocumentStore = defineStore('document', () => {
     const sequence = ++loadSequence
     loading.value = true
     errorMessage.value = ''
+    snapshots.value = []
     try {
       const document = await documentApi.get(id)
       if (sequence !== loadSequence) return false
       applyServerDocument(document)
-      void loadSnapshots()
+      void loadSnapshotsFor(document.id, sequence)
       return true
     } catch (error) {
       if (sequence === loadSequence) {
@@ -122,46 +126,71 @@ export const useDocumentStore = defineStore('document', () => {
     snapshots.value = []
   }
 
+  async function loadSnapshotsFor(id: string, sequence: number): Promise<void> {
+    try {
+      const loaded = await snapshotApi.list(id)
+      if (isCurrent(id, sequence)) snapshots.value = loaded
+    } catch (error) {
+      if (isCurrent(id, sequence)) {
+        errorMessage.value = error instanceof Error ? error.message : 'Snapshots could not be loaded.'
+      }
+    }
+  }
+
   async function loadSnapshots(): Promise<void> {
     if (!documentId.value) {
       snapshots.value = []
       return
     }
-    try {
-      snapshots.value = await snapshotApi.list(documentId.value)
-    } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : 'Snapshots could not be loaded.'
-    }
+    await loadSnapshotsFor(documentId.value, loadSequence)
   }
 
   async function takeSnapshot(name: string): Promise<boolean> {
-    if (!documentId.value || isDirty.value) return false
+    const id = documentId.value
+    const sequence = loadSequence
+    if (!id || isDirty.value) return false
     const trimmed = name.trim()
-    const snapshot = await snapshotApi.create(documentId.value, trimmed || undefined)
+    const snapshot = await snapshotApi.create(id, trimmed || undefined)
+    if (!isCurrent(id, sequence) || snapshot.documentId !== id) return false
     snapshots.value = [snapshot, ...snapshots.value]
     return true
   }
 
   async function renameSnapshot(snapshotId: string, name: string): Promise<void> {
+    const id = documentId.value
+    const sequence = loadSequence
+    if (!id || !snapshots.value.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === id)) return
     const renamed = await snapshotApi.rename(snapshotId, name.trim())
+    if (!isCurrent(id, sequence) || renamed.documentId !== id) return
     snapshots.value = snapshots.value.map((snapshot) =>
       snapshot.id === renamed.id ? renamed : snapshot,
     )
   }
 
   async function restoreSnapshot(snapshotId: string): Promise<boolean> {
-    if (isDirty.value) return false
+    const id = documentId.value
+    const sequence = loadSequence
+    if (!id || isDirty.value || !snapshots.value.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === id)) return false
+    const expectedRevision = revision.value
     try {
-      applyServerDocument(await snapshotApi.restore(snapshotId, revision.value))
+      const restored = await snapshotApi.restore(snapshotId, expectedRevision)
+      if (!isCurrent(id, sequence) || restored.id !== id) return false
+      applyServerDocument(restored)
       return true
     } catch (error) {
-      errorMessage.value = error instanceof Error ? error.message : 'The snapshot could not be restored.'
+      if (isCurrent(id, sequence)) {
+        errorMessage.value = error instanceof Error ? error.message : 'The snapshot could not be restored.'
+      }
       return false
     }
   }
 
   async function deleteSnapshot(snapshotId: string): Promise<void> {
+    const id = documentId.value
+    const sequence = loadSequence
+    if (!id || !snapshots.value.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === id)) return
     await snapshotApi.delete(snapshotId)
+    if (!isCurrent(id, sequence)) return
     snapshots.value = snapshots.value.filter((snapshot) => snapshot.id !== snapshotId)
   }
 
@@ -182,6 +211,7 @@ export const useDocumentStore = defineStore('document', () => {
 
   async function save(): Promise<boolean> {
     const id = documentId.value
+    const sequence = loadSequence
     if (!id || operation.value === 'saving') return false
     if (!title.value.trim()) {
       operation.value = 'failed'
@@ -199,6 +229,7 @@ export const useDocumentStore = defineStore('document', () => {
     conflict.value = null
     try {
       const saved = await documentApi.save(id, payload)
+      if (!isCurrent(id, sequence) || saved.id !== id) return false
       revision.value = saved.revision
       savedAt.value = saved.savedAt
       savedBuffer.value = bufferOf(saved)
@@ -214,6 +245,7 @@ export const useDocumentStore = defineStore('document', () => {
       operation.value = 'idle'
       return true
     } catch (error) {
+      if (!isCurrent(id, sequence)) return false
       if (error instanceof ApiRequestError && error.status === 409 && error.code === 'DOCUMENT_CONFLICT') {
         const details = error.details as Partial<ConflictMetadata> | undefined
         conflict.value = {

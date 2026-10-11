@@ -139,7 +139,10 @@ export function createBinderService(
       )
     },
     rename(itemId, title) {
-      activeOrThrow(itemId)
+      const { item } = activeOrThrow(itemId)
+      if (item.kind === 'document') {
+        throw new ApiError(409, 'DOCUMENT_RENAME_REQUIRES_SAVE', 'Rename documents through the document save endpoint.')
+      }
       return toDto(repository.rename(itemId, title, clock().toISOString()) as BinderRecord)
     },
     move(input) {

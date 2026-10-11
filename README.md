@@ -34,3 +34,9 @@ npm run test:e2e
 ```
 
 The API listens on `HOST`/`PORT`, stores data under `DATA_DIR`, and serves the built SPA from `STATIC_ROOT`.
+
+The normal browser suite uses the local server and skips Docker-only checks. On a host with Docker, run the full container replacement and real converter matrix with:
+
+```sh
+RUN_CONTAINER_E2E=1 npm run test:e2e -- e2e/container-persistence.spec.ts
+```
