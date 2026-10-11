@@ -1,0 +1,25 @@
+{
+  "name": "@scr/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && mkdir -p dist/db/migrations && cp src/db/migrations/*.sql dist/db/migrations/",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@scr/shared": "*",
+    "better-sqlite3": "13.0.3",
+    "fastify": "5.12.5",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "^24.10.0",
+    "tsx": "4.23.15",
+    "typescript": "6.0.2",
+    "vitest": "3.2.7"
+  }
+}
