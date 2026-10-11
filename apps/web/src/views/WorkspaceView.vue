@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { CompileRequest } from '@scr/shared'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import AppToolbar from '../components/layout/AppToolbar.vue'
@@ -9,6 +10,8 @@ import WorkspacePanes from '../components/layout/WorkspacePanes.vue'
 import { useUnsavedGuard } from '../composables/useUnsavedGuard.js'
 import BinderTree from '../features/binder/BinderTree.vue'
 import FolderContents from '../features/binder/FolderContents.vue'
+import CompileDialog from '../features/compile/CompileDialog.vue'
+import { useCompile } from '../features/compile/useCompile.js'
 import DocumentEditor from '../features/editor/DocumentEditor.vue'
 import DocumentHeader from '../features/editor/DocumentHeader.vue'
 import SaveStatus from '../features/editor/SaveStatus.vue'
@@ -22,6 +25,9 @@ const route = useRoute()
 const store = useWorkspaceStore()
 const documentStore = useDocumentStore()
 const unsavedGuard = useUnsavedGuard(() => documentStore.isDirty)
+const compileTask = useCompile()
+const compileVisible = ref(false)
+const compileTrigger = ref<HTMLElement | null>(null)
 const layout = ref<WorkspaceLayout>(layoutForWidth(window.innerWidth))
 
 const folderChildren = computed(() => {
@@ -57,6 +63,21 @@ function toggleInspector(): void {
 
 function selectPanel(panel: WorkspacePanel): void {
   store.activePanel = panel
+}
+
+function openCompile(event: Event): void {
+  compileTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  compileVisible.value = true
+}
+
+async function closeCompile(): Promise<void> {
+  compileVisible.value = false
+  await nextTick()
+  compileTrigger.value?.focus()
+}
+
+async function runCompile(request: CompileRequest): Promise<void> {
+  if (await compileTask.compile(store.projectId, request)) await closeCompile()
 }
 
 async function openFolderItem(itemId: string): Promise<void> {
@@ -111,6 +132,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
       @toggle-binder="toggleBinder"
       @toggle-inspector="toggleInspector"
       @save="saveDocument"
+      @compile="openCompile"
     />
 
     <p v-if="store.loading" role="status" class="workspace-message">Opening project…</p>
@@ -170,6 +192,15 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
       :save-state="documentStore.saveState"
       :words="documentStore.counts.words"
       :characters="documentStore.counts.characters"
+    />
+    <CompileDialog
+      :visible="compileVisible"
+      :dirty="documentStore.isDirty"
+      :busy="compileTask.compiling.value"
+      :error="compileTask.error.value"
+      @close="closeCompile"
+      @save="saveDocument"
+      @compile="runCompile"
     />
   </div>
 </template>

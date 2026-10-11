@@ -599,6 +599,113 @@ button {
   background: color-mix(in srgb, var(--color-danger) 20%, transparent);
 }
 
+.compile-dialog {
+  width: min(760px, calc(100vw - 24px));
+}
+
+.compile-grid {
+  display: grid;
+  min-height: 220px;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--color-border);
+}
+
+.compile-selection,
+.compile-order {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 8px 0;
+}
+
+.compile-selection {
+  border-right: 1px solid var(--color-border);
+}
+
+.compile-selection legend,
+.compile-order > strong {
+  display: block;
+  padding: 0 8px 6px;
+  color: var(--color-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.compile-selection label {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  font-size: 12px;
+}
+
+.compile-order ol {
+  margin: 0;
+  padding: 0 28px;
+  font-size: 12px;
+}
+
+.compile-order li {
+  padding: 4px 0;
+}
+
+.compile-order p {
+  margin: 8px;
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.compile-options {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.compile-options fieldset {
+  display: flex;
+  gap: 16px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.compile-options legend {
+  margin-bottom: 5px;
+  color: var(--color-muted);
+}
+
+.compile-dirty-gate {
+  border-block: 1px solid var(--color-warning);
+  padding: 12px 0;
+}
+
+.compile-dirty-gate p {
+  margin: 0 0 10px;
+}
+
+.compile-dirty-gate > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.compile-error {
+  color: var(--color-danger);
+}
+
+@media (max-width: 600px) {
+  .compile-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .compile-selection {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+}
+
 .workspace-inspector-content {
   height: 100%;
 }
