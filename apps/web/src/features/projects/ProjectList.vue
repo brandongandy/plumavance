@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ProjectDto } from '@scr/shared'
+import type { ProjectDto } from '@pluma/shared'
 import Button from 'primevue/button'
 
 defineProps<{

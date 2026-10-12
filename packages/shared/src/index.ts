@@ -12,6 +12,7 @@ export type {
   ProjectDto,
   SearchResultDto,
   SnapshotDto,
+  SnapshotSummaryDto,
 } from './domain.js'
 export {
   CreateProjectRequestSchema,
@@ -48,8 +49,14 @@ export {
   type RestoreSnapshotRequest,
 } from './schemas/snapshots.js'
 export {
+  CompileExportTypeSchema,
   CompileFormatSchema,
   CompileRequestSchema,
+  EreaderFontSchema,
+  PaperbackPageSizeSchema,
+  type CompileExportType,
   type CompileFormat,
   type CompileRequest,
+  type EreaderFont,
+  type PaperbackPageSize,
 } from './schemas/compile.js'

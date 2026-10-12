@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { CompileRequest } from '@scr/shared'
+import type { CompileRequest } from '@pluma/shared'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 

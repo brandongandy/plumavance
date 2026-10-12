@@ -5,7 +5,13 @@ import { computed } from 'vue'
 
 import { buildSnapshotDiff } from './snapshotDiff.js'
 
-const props = defineProps<{ visible: boolean; currentText: string; snapshotText: string }>()
+const props = defineProps<{
+  visible: boolean
+  currentText: string
+  snapshotText: string
+  loading?: boolean
+  error?: string
+}>()
 const emit = defineEmits<{ close: [] }>()
 const parts = computed(() => buildSnapshotDiff(props.currentText, props.snapshotText))
 </script>
@@ -16,10 +22,12 @@ const parts = computed(() => buildSnapshotDiff(props.currentText, props.snapshot
     modal
     header="Compare Snapshot"
     :draggable="false"
-    class="scr-dialog snapshot-dialog"
+    class="pluma-dialog snapshot-dialog"
     @update:visible="!$event && emit('close')"
   >
-    <div aria-label="Snapshot comparison" class="snapshot-comparison">
+    <p v-if="loading" role="status">Loading snapshot…</p>
+    <p v-else-if="error" role="alert">{{ error }}</p>
+    <div v-else aria-label="Snapshot comparison" class="snapshot-comparison">
       <template v-for="(part, index) in parts" :key="index">
         <ins v-if="part.kind === 'added'"><span class="sr-only">Added: </span>{{ part.text }}</ins>
         <del v-else-if="part.kind === 'removed'"><span class="sr-only">Removed: </span>{{ part.text }}</del>

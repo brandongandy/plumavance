@@ -1,4 +1,4 @@
-import type { EditorDocument, EditorNode } from '@scr/shared'
+import type { EditorDocument, EditorNode } from '@pluma/shared'
 
 const blockTypes = new Set([
   'paragraph',

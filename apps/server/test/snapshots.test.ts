@@ -10,7 +10,7 @@ interface IdRecord {
 
 interface SnapshotRecord extends IdRecord {
   name: string | null
-  contentText: string
+  wordCount: number
   createdAt: string
 }
 
@@ -76,14 +76,44 @@ describe('manual snapshot routes', () => {
     expect(await list()).toEqual([])
   })
 
+  test('snapshot_list_omits_content_bodies', async () => {
+    await save('One two three', 0)
+    const created = await take('Draft')
+    const snapshots = await list()
+    const renamed = await app.inject({
+      method: 'PATCH',
+      url: `/api/snapshots/${created.id}`,
+      payload: { name: 'Milestone' },
+    })
+
+    for (const summary of [created, snapshots[0], renamed.json<Record<string, unknown>>()]) {
+      expect(summary).toMatchObject({ wordCount: 3 })
+      expect(summary).not.toHaveProperty('contentJson')
+      expect(summary).not.toHaveProperty('contentText')
+    }
+  })
+
+  test('snapshot_detail_retains_full_content', async () => {
+    await save('Full snapshot prose', 0)
+    const snapshot = await take('Draft')
+
+    const detail = await app.inject({ method: 'GET', url: `/api/snapshots/${snapshot.id}` })
+
+    expect(detail.statusCode).toBe(200)
+    expect(detail.json()).toMatchObject({
+      contentJson: { type: 'doc' },
+      contentText: 'Full snapshot prose',
+    })
+  })
+
   test('take_snapshot_copies_only_saved_content_and_lists_newest_first', async () => {
     await save('First saved copy', 0)
     const first = await take('  First pass  ')
     await save('Second saved copy', 1)
     const second = await take('   ')
 
-    expect(first).toMatchObject({ name: 'First pass', contentText: 'First saved copy' })
-    expect(second).toMatchObject({ name: null, contentText: 'Second saved copy' })
+    expect(first).toMatchObject({ name: 'First pass', wordCount: 3 })
+    expect(second).toMatchObject({ name: null, wordCount: 3 })
     expect((await list()).map((snapshot) => snapshot.id)).toEqual([second.id, first.id])
   })
 
@@ -98,7 +128,8 @@ describe('manual snapshot routes', () => {
     })
     const fetched = await app.inject({ method: 'GET', url: `/api/snapshots/${snapshot.id}` })
 
-    expect(renamed.json()).toMatchObject({ name: 'Milestone', contentText: 'Immutable prose' })
+    expect(renamed.json()).toMatchObject({ name: 'Milestone', wordCount: 2 })
+    expect(renamed.json()).not.toHaveProperty('contentText')
     expect(fetched.json()).toMatchObject({ name: 'Milestone', contentText: 'Immutable prose' })
   })
 

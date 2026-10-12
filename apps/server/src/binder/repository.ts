@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 
 import type { BinderRecord } from './tree.js'
 
@@ -39,7 +39,10 @@ export interface BinderRepository {
   find(id: string): BinderRecord | undefined
   create(item: BinderItemDto): BinderRecord
   rename(id: string, title: string, updatedAt: string): BinderRecord | undefined
-  setLocation(id: string, parentId: string | null, position: number, updatedAt: string): void
+  setLocations(
+    locations: Array<{ id: string; parentId: string | null; position: number }>,
+    updatedAt: string,
+  ): void
   setTrash(
     id: string,
     input: {
@@ -94,10 +97,24 @@ export function createBinderRepository(database: Database.Database): BinderRepos
         .run(title, updatedAt, id)
       return result.changes === 0 ? undefined : this.find(id)
     },
-    setLocation(id, parentId, position, updatedAt) {
+    setLocations(locations, updatedAt) {
+      if (locations.length === 0) return
       database
-        .prepare('UPDATE binder_items SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?')
-        .run(parentId, position, updatedAt, id)
+        .prepare(
+          `WITH locations AS (
+             SELECT json_extract(value, '$.id') AS id,
+                    json_extract(value, '$.parentId') AS parent_id,
+                    CAST(json_extract(value, '$.position') AS INTEGER) AS position
+             FROM json_each(?)
+           )
+           UPDATE binder_items AS item
+           SET parent_id = locations.parent_id,
+               position = locations.position,
+               updated_at = ?
+           FROM locations
+           WHERE item.id = locations.id`,
+        )
+        .run(JSON.stringify(locations), updatedAt)
     },
     setTrash(id, input) {
       database

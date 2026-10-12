@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import { computed, nextTick, ref, watch } from 'vue'
@@ -8,6 +8,7 @@ import { useProvidedUnsavedGuard } from '../../composables/useUnsavedGuard.js'
 import { useWorkspaceStore } from '../../stores/workspace.js'
 import BinderToolbar from './BinderToolbar.vue'
 import BinderTreeItem from './BinderTreeItem.vue'
+import { useDebouncedSearch } from './useDebouncedSearch.js'
 import { createMoveIntent, useBinderMove } from './useBinderMove.js'
 
 const store = useWorkspaceStore()
@@ -21,6 +22,7 @@ const pendingDeleteId = ref<string | null>(null)
 const dropTarget = ref<{ id: string; position: 'before' | 'inside' | 'after' } | null>(null)
 const initializedFromProject = ref(false)
 const { moveByPointer, moveByKeyboard } = useBinderMove((intent) => store.moveItem(intent))
+useDebouncedSearch(query, (value, signal) => store.search(value, signal))
 
 function childrenOf(parentId: string | null): BinderItemDto[] {
   return store.items
@@ -196,10 +198,6 @@ async function trashSelected(): Promise<void> {
   await store.trashItem(store.activeItemId)
 }
 
-async function runSearch(): Promise<void> {
-  await store.search(query.value)
-}
-
 function handleDragStart(event: DragEvent, item: BinderItemDto): void {
   draggedId.value = item.id
   event.dataTransfer?.setData('text/plain', item.id)
@@ -253,7 +251,7 @@ async function restore(itemId: string): Promise<void> {
     </div>
     <label class="binder-search">
       <i class="pi pi-search" aria-hidden="true" />
-      <InputText v-model="query" aria-label="Search binder" placeholder="Search" @input="runSearch" />
+      <InputText v-model="query" aria-label="Search binder" placeholder="Search" />
     </label>
     <div role="tree" aria-label="Project binder" class="binder-tree">
       <BinderTreeItem

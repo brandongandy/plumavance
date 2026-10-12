@@ -9,10 +9,10 @@ export interface TemporaryDatabase {
 }
 
 export async function createTemporaryDatabase(): Promise<TemporaryDatabase> {
-  const directory = await mkdtemp(join(tmpdir(), 'scr-test-'))
+  const directory = await mkdtemp(join(tmpdir(), 'pluma-test-'))
   return {
     directory,
-    path: join(directory, 'scr.sqlite'),
+    path: join(directory, 'pluma.sqlite'),
     cleanup: async () => rm(directory, { recursive: true, force: true }),
   }
 }

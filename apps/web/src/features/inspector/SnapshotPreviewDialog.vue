@@ -1,9 +1,14 @@
 <script setup lang="ts">
-import type { SnapshotDto } from '@scr/shared'
+import type { SnapshotDto } from '@pluma/shared'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 
-defineProps<{ visible: boolean; snapshot: SnapshotDto | null }>()
+defineProps<{
+  visible: boolean
+  snapshot: SnapshotDto | null
+  loading?: boolean
+  error?: string
+}>()
 const emit = defineEmits<{ close: [] }>()
 </script>
 
@@ -13,10 +18,12 @@ const emit = defineEmits<{ close: [] }>()
     modal
     :header="snapshot?.name || 'Snapshot Preview'"
     :draggable="false"
-    class="scr-dialog snapshot-dialog"
+    class="pluma-dialog snapshot-dialog"
     @update:visible="!$event && emit('close')"
   >
-    <pre aria-label="Snapshot preview" class="snapshot-preview">{{ snapshot?.contentText }}</pre>
+    <p v-if="loading" role="status">Loading snapshot…</p>
+    <p v-else-if="error" role="alert">{{ error }}</p>
+    <pre v-else aria-label="Snapshot preview" class="snapshot-preview">{{ snapshot?.contentText }}</pre>
     <template #footer>
       <Button label="Close" aria-label="Close snapshot preview" @click="emit('close')" />
     </template>

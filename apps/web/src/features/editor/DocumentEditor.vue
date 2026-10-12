@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { EditorDocument } from '@scr/shared'
+import type { EditorDocument } from '@pluma/shared'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
 import { onBeforeUnmount, ref, watch } from 'vue'
 

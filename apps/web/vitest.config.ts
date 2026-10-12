@@ -7,7 +7,7 @@ export default defineConfig({
   plugins: [vue()],
   resolve: {
     alias: {
-      '@scr/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
+      '@pluma/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),
     },
   },
   test: {

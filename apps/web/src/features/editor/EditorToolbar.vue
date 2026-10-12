@@ -92,7 +92,21 @@ defineProps<{ editor: Editor | null }>()
       @click="editor.chain().focus().toggleOrderedList().run()"
     />
     <Button
-      icon="pi pi-quote-right"
+      icon="pi pi-indent"
+      text
+      aria-label="Indent"
+      :disabled="!editor.can().chain().focus().sinkListItem('listItem').run()"
+      @click="editor.chain().focus().sinkListItem('listItem').run()"
+    />
+    <Button
+      icon="pi pi-outdent"
+      text
+      aria-label="Outdent"
+      :disabled="!editor.can().chain().focus().liftListItem('listItem').run()"
+      @click="editor.chain().focus().liftListItem('listItem').run()"
+    />
+    <Button
+      icon="pi pi-block-quote"
       text
       aria-label="Block quote"
       :aria-pressed="editor.isActive('blockquote')"

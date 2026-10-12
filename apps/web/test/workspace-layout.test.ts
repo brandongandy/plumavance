@@ -96,7 +96,7 @@ describe('workspace layout', () => {
 
   test('loads_and_persists_keyboard_resized_pane_preferences', async () => {
     localStorage.setItem(
-      'scr.workspace.preferences',
+      'pluma.workspace.preferences',
       JSON.stringify({ binderWidth: 264, inspectorWidth: 296, binderOpen: true, inspectorOpen: true }),
     )
     const wrapper = await mountWorkspace()
@@ -105,7 +105,7 @@ describe('workspace layout', () => {
     const binderSeparator = wrapper.get('[aria-label="Resize binder"]')
     await binderSeparator.trigger('keydown', { key: 'ArrowRight' })
     expect(wrapper.get('[data-workspace]').attributes('style')).toContain('--binder-width: 276px')
-    expect(JSON.parse(localStorage.getItem('scr.workspace.preferences') ?? '{}')).toMatchObject({
+    expect(JSON.parse(localStorage.getItem('pluma.workspace.preferences') ?? '{}')).toMatchObject({
       binderWidth: 276,
     })
   })

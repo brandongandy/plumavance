@@ -1,4 +1,4 @@
-import type { ProjectDto } from '@scr/shared'
+import type { ProjectDto } from '@pluma/shared'
 import { z } from 'zod'
 
 import { apiRequest, apiRequestEmpty } from './client.js'

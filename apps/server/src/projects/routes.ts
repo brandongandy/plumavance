@@ -2,7 +2,7 @@ import {
   CreateProjectRequestSchema,
   DeleteProjectRequestSchema,
   UpdateProjectRequestSchema,
-} from '@scr/shared'
+} from '@pluma/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 

@@ -1,5 +1,5 @@
 {
-  "name": "scr",
+  "name": "pluma",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "build": "npm run build --workspace @scr/shared && npm run build --workspace @scr/server && npm run build --workspace @scr/web",
+    "build": "npm run build --workspace @pluma/shared && npm run build --workspace @pluma/server && npm run build --workspace @pluma/web",
     "lint": "eslint .",
     "test": "npm test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",

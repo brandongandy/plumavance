@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 
 defineProps<{ folder: BinderItemDto; items: BinderItemDto[] }>()
 const emit = defineEmits<{ open: [item: BinderItemDto] }>()

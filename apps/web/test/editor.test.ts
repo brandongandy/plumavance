@@ -1,4 +1,4 @@
-import type { DocumentDto, EditorDocument } from '@scr/shared'
+import type { DocumentDto, EditorDocument } from '@pluma/shared'
 import PrimeVue from 'primevue/config'
 import { Editor } from '@tiptap/vue-3'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -260,6 +260,9 @@ describe('document editor state', () => {
     await flushPromises()
 
     expect(wrapper.get('[role="toolbar"][aria-label="Text formatting"]')).toBeTruthy()
+    expect(wrapper.get('button[aria-label="Indent"] .pi-indent')).toBeTruthy()
+    expect(wrapper.get('button[aria-label="Outdent"] .pi-outdent')).toBeTruthy()
+    expect(wrapper.get('button[aria-label="Block quote"] .pi-block-quote')).toBeTruthy()
     expect(wrapper.get('[contenteditable="true"][aria-label="Document editor"]')).toBeTruthy()
     await wrapper.get('[data-document-editor]').trigger('keydown', { key: 's', ctrlKey: true })
     expect(wrapper.emitted('save')).toHaveLength(1)

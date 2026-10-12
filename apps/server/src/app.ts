@@ -1,3 +1,5 @@
+import type { Writable } from 'node:stream'
+
 import Fastify, { type FastifyInstance } from 'fastify'
 import fastifyStatic from '@fastify/static'
 import { ZodError } from 'zod'
@@ -26,6 +28,8 @@ export interface CreateAppOptions {
   staticRoot?: string
   clock?: () => Date
   converters?: ConverterSet
+  logger?: boolean
+  loggerStream?: Writable
 }
 
 export async function createApp(options: CreateAppOptions): Promise<FastifyInstance> {
@@ -51,7 +55,23 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     options.converters ?? createLocalConverters(),
   )
 
-  const app = Fastify({ logger: false })
+  const app = Fastify({
+    logger: options.logger
+      ? {
+          ...(options.loggerStream ? { stream: options.loggerStream } : {}),
+          serializers: {
+            req(request) {
+              return {
+                method: request.method,
+                url: request.url.split('?', 1)[0] ?? request.url,
+                host: request.hostname,
+                remoteAddress: request.ip,
+              }
+            },
+          },
+        }
+      : false,
+  })
 
   app.get('/api/health', async () => ({ status: 'ok' as const }))
   registerProjectRoutes(app, projectService, binderService)
@@ -70,7 +90,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
     })
   }
 
-  app.setErrorHandler((error, _request, reply) => {
+  app.setErrorHandler((error, request, reply) => {
     if (error instanceof ApiError) {
       return reply.status(error.statusCode).send({
         code: error.code,
@@ -87,6 +107,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
       })
     }
 
+    request.log.error({ err: error }, 'Unexpected request failure.')
     return reply.status(500).send({
       code: 'INTERNAL_ERROR',
       message: 'An unexpected error occurred.',

@@ -2,7 +2,7 @@ import {
   EditorDocumentSchema,
   type DocumentDto,
   type SaveDocumentRequest,
-} from '@scr/shared'
+} from '@pluma/shared'
 import { z } from 'zod'
 
 import { apiRequest } from './client.js'

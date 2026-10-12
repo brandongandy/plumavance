@@ -10,12 +10,21 @@ interface Migration {
 }
 
 function loadMigrations(): Migration[] {
-  const url = new URL('./migrations/001_initial.sql', import.meta.url)
   return [
     {
       version: 1,
       name: 'initial',
-      sql: readFileSync(fileURLToPath(url), 'utf8'),
+      sql: readFileSync(fileURLToPath(new URL('./migrations/001_initial.sql', import.meta.url)), 'utf8'),
+    },
+    {
+      version: 2,
+      name: 'document-search',
+      sql: readFileSync(fileURLToPath(new URL('./migrations/002_document_search.sql', import.meta.url)), 'utf8'),
+    },
+    {
+      version: 3,
+      name: 'snapshot-word-counts',
+      sql: readFileSync(fileURLToPath(new URL('./migrations/003_snapshot_word_counts.sql', import.meta.url)), 'utf8'),
     },
   ]
 }

@@ -1,4 +1,4 @@
-import type { CompileRequest } from '@scr/shared'
+import type { CompileRequest } from '@pluma/shared'
 
 import { ApiRequestError } from './client.js'
 

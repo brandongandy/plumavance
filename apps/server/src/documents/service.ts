@@ -2,7 +2,7 @@ import type {
   DocumentDto,
   SaveDocumentRequest,
   SearchResultDto,
-} from '@scr/shared'
+} from '@pluma/shared'
 
 import type { BinderService } from '../binder/service.js'
 import { ApiError } from '../http/errors.js'
