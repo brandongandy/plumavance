@@ -72,6 +72,17 @@ afterEach(() => {
 })
 
 describe('workspace layout', () => {
+  test('shows_the_app_logo_immediately_before_the_back_button', async () => {
+    const wrapper = await mountWorkspace()
+    const header = wrapper.get('header[aria-label="Application toolbar"]')
+    const logo = header.get('[data-app-logo]')
+    const backButton = header.get('button[aria-label="Back to projects"]')
+
+    expect(logo.attributes()).toMatchObject({ alt: '', 'aria-hidden': 'true' })
+    expect(logo.classes()).toEqual(expect.arrayContaining(['h-7', 'w-auto']))
+    expect(logo.element.nextElementSibling).toBe(backButton.element)
+  })
+
   test('uses_the_scrivener_ordered_three_pane_frame_and_semantic_landmarks', async () => {
     const wrapper = await mountWorkspace()
     const panes = wrapper.findAll('[data-workspace-pane]')

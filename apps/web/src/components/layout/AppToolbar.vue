@@ -2,6 +2,8 @@
 import Button from 'primevue/button'
 import { useRouter } from 'vue-router'
 
+import AppLogo from './AppLogo.vue'
+
 defineProps<{
   projectName: string
   binderOpen: boolean
@@ -17,6 +19,7 @@ const router = useRouter()
     aria-label="Application toolbar"
     class="flex h-11 shrink-0 items-center gap-1 border-b border-[var(--color-border)] bg-[var(--color-chrome)] px-2"
   >
+    <AppLogo class="max-[332px]:h-auto max-[332px]:w-[calc(100vw-19.3125rem)]" />
     <Button
       icon="pi pi-chevron-left"
       text

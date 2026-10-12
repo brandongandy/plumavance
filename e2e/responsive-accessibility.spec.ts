@@ -3,13 +3,16 @@ import { expect, test } from '@playwright/test'
 
 import { createDocument, createProject } from './helpers.js'
 
-for (const viewport of [{ width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
+for (const viewport of [{ width: 320, height: 568 }, { width: 390, height: 844 }, { width: 768, height: 1024 }, { width: 1024, height: 768 }, { width: 1440, height: 900 }]) {
   test(`workspace_at_${viewport.width}px`, async ({ page }, testInfo) => {
     await page.setViewportSize(viewport)
     await createProject(page, `Viewport ${viewport.width}`)
     await createDocument(page)
     const workspace = page.locator('[data-workspace]')
     await expect(workspace).toHaveAttribute('data-layout', viewport.width < 768 ? 'phone' : viewport.width < 1024 ? 'tablet' : 'desktop')
+    const toolbar = page.locator('header[aria-label="Application toolbar"]')
+    expect(await toolbar.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+    await expect(page.getByLabel('Show inspector')).toBeInViewport()
     await expect(page.locator('.eyebrow, .hero, .card, [class*="gradient"], [class*="glass"]')).toHaveCount(0)
     const results = await new AxeBuilder({ page }).analyze()
     expect(results.violations.filter((violation) => violation.impact === 'critical' || violation.impact === 'serious')).toEqual([])
