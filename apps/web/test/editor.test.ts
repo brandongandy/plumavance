@@ -86,6 +86,22 @@ describe('document editor state', () => {
     expect(countText(text)).toEqual({ words: 4, characters: 25 })
   })
 
+  test('keeps_the_saved_word_count_while_the_unsaved_content_changes', async () => {
+    setActivePinia(createPinia())
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    vi.spyOn(documentApi, 'get').mockResolvedValue(documentFixture({ contentJson: proseContent, contentText: 'Stale server text' }))
+    vi.spyOn(documentApi, 'save').mockResolvedValue(documentFixture({ contentJson: emptyContent, revision: 1 }))
+    const store = useDocumentStore()
+
+    await store.load(firstId)
+    expect(store.savedWordCount).toBe(4)
+    store.setContent(emptyContent)
+    expect(store.counts.words).toBe(0)
+    expect(store.savedWordCount).toBe(4)
+    await store.save()
+    expect(store.savedWordCount).toBe(0)
+  })
+
   test('tracks_title_content_and_notes_and_saves_them_in_one_request', async () => {
     setActivePinia(createPinia())
     let resolveSave: ((response: Response) => void) | undefined
@@ -266,6 +282,47 @@ describe('document editor state', () => {
     expect(wrapper.get('[contenteditable="true"][aria-label="Document editor"]')).toBeTruthy()
     await wrapper.get('[data-document-editor]').trigger('keydown', { key: 's', ctrlKey: true })
     expect(wrapper.emitted('save')).toHaveLength(1)
+  })
+
+  test('emits_signed_word_deltas_for_typing_and_deletion_but_not_formatting', async () => {
+    const wrapper = mount(DocumentEditor, {
+      attachTo: document.body,
+      props: { modelValue: emptyContent },
+      global: { plugins: [[PrimeVue, { unstyled: true }]] },
+    })
+    try {
+      await flushPromises()
+      const editable = wrapper.get('[contenteditable="true"][aria-label="Document editor"]')
+      for (const text of ['Quiet', 'Quiet words', 'Quiet']) {
+        editable.get('p').element.textContent = text
+        await editable.trigger('input')
+        await flushPromises()
+      }
+      expect(wrapper.emitted('word-count-delta')).toEqual([[1], [1], [-1]])
+      await wrapper.get('button[aria-label="Heading 1"]').trigger('click')
+      await flushPromises()
+      expect(editable.get('h1').text()).toBe('Quiet')
+      expect(wrapper.emitted('word-count-delta')).toEqual([[1], [1], [-1]])
+      expect(wrapper.emitted('update:modelValue')).toHaveLength(4)
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
+  test('does_not_emit_activity_or_model_updates_for_server_content_replacement', async () => {
+    const wrapper = mount(DocumentEditor, {
+      props: { modelValue: emptyContent },
+      global: { plugins: [[PrimeVue, { unstyled: true }]] },
+    })
+    try {
+      await flushPromises()
+      await wrapper.setProps({ modelValue: proseContent })
+      expect(wrapper.get('[aria-label="Document editor"]').text()).toContain('Quiet words.')
+      expect(wrapper.emitted('word-count-delta')).toBeUndefined()
+      expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   test.each([
