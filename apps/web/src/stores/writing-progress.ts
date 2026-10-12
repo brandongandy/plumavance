@@ -45,9 +45,11 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
   const _inFlight = shallowRef<Batch | null>(restored.inFlight && Object.freeze(restored.inFlight))
   const _pending = shallowRef<Batch[]>(restored.pending)
   const _syncFailed = shallowRef(false)
+  const _progressFailed = shallowRef(false)
   let loadSequence = 0
   let readSequence = 0
   let dailyRevision = 0
+  let settingsRevision = 0
   let disposed = false
   let midnightTimer: ReturnType<typeof setTimeout> | undefined
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
@@ -59,7 +61,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
       total + (batch.projectId === projectId.value && batch.localDate === localDate.value ? batch.delta : 0), 0)
   })
   const syncState = computed<'synced' | 'syncing' | 'failed'>(() => {
-    if (_syncFailed.value) return 'failed'
+    if (_syncFailed.value || _progressFailed.value) return 'failed'
     return _inFlight.value || _pending.value.length ? 'syncing' : 'synced'
   })
 
@@ -99,19 +101,24 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     const requestSequence = ++readSequence
     const date = localDate.value
     const revision = dailyRevision
+    const loadedSettingsRevision = settingsRevision
     loading.value = true
     errorMessage.value = ''
     try {
       const progress = await wordCountApi.getProgress(id, date)
       if (!isCurrent(id, sequence) || readSequence !== requestSequence || localDate.value !== date) return
-      projectWordTarget.value = progress.projectWordTarget
-      dailyWordTarget.value = progress.dailyWordTarget
-      dailyCountMode.value = progress.dailyCountMode
+      if (loadedSettingsRevision === settingsRevision) {
+        projectWordTarget.value = progress.projectWordTarget
+        dailyWordTarget.value = progress.dailyWordTarget
+        dailyCountMode.value = progress.dailyCountMode
+      }
       projectWordCount.value = progress.projectWordCount
       // A newer event acknowledgement already supplies the authoritative daily total.
       if (revision === dailyRevision) _serverDailyWordCount.value = progress.dailyWordCount
+      _progressFailed.value = false
     } catch (error) {
       if (isCurrent(id, sequence) && readSequence === requestSequence) {
+        _progressFailed.value = true
         errorMessage.value = error instanceof Error ? error.message : 'Writing progress could not be loaded.'
       }
     } finally {
@@ -133,6 +140,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     dailyCountMode.value = 'additions'
     projectWordCount.value = 0
     _serverDailyWordCount.value = 0
+    _progressFailed.value = false
     scheduleMidnight()
     await readProgress()
     if (isCurrent(id, sequence)) void flush()
@@ -183,12 +191,11 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
         })
         if (disposed) return
         _inFlight.value = null
-        if (isCurrent(batch.projectId, sequence) && localDate.value === batch.localDate) {
+        if (projectId.value === batch.projectId && localDate.value === batch.localDate) {
+          // This serialized acknowledgment remains authoritative for the same project/date after reopening.
           _serverDailyWordCount.value = result.dailyWordCount
           dailyRevision += 1
-        } else if (projectId.value === batch.projectId && localDate.value === batch.localDate) {
-          // Reopening the same project invalidates this response; reconcile through a fresh read.
-          void readProgress()
+          if (loadSequence !== sequence) void readProgress()
         }
         persistQueue()
       } catch (error) {
@@ -217,6 +224,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     if (!id || disposed) return
     const project = await wordCountApi.updateSettings(id, input)
     if (!isCurrent(id, sequence)) return
+    settingsRevision += 1
     projectWordTarget.value = project.projectWordTarget
     dailyWordTarget.value = project.dailyWordTarget
     dailyCountMode.value = project.dailyCountMode
@@ -240,7 +248,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
   return {
     projectId, localDate, projectWordTarget, dailyWordTarget, dailyCountMode,
     projectWordCount, dailyWordCount, editMode, loading, errorMessage, syncState,
-    _serverDailyWordCount, _inFlight, _pending, _syncFailed,
+    _serverDailyWordCount, _inFlight, _pending, _syncFailed, _progressFailed,
     load, refresh, recordEditorDelta, flush, updateSettings, setEditMode, liveProjectWordCount, dispose,
   }
 })

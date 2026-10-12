@@ -1,4 +1,9 @@
-import type { ProjectDto, RecordWordCountEventRequest, WritingProgressDto } from '@pluma/shared'
+import type {
+  ProjectDto,
+  RecordWordCountEventRequest,
+  UpdateWritingSettingsRequest,
+  WritingProgressDto,
+} from '@pluma/shared'
 import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -35,6 +40,7 @@ function deferredResponse(): { promise: Promise<Response>; resolve: (response: R
 function installApi(options: {
   get?: (projectId: string, date: string) => Response | Promise<Response>
   post?: (projectId: string, event: RecordWordCountEventRequest) => Response | Promise<Response>
+  patch?: (projectId: string, input: UpdateWritingSettingsRequest) => Response | Promise<Response>
 } = {}): { events: Array<{ projectId: string; event: RecordWordCountEventRequest }> } {
   const events: Array<{ projectId: string; event: RecordWordCountEventRequest }> = []
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -48,6 +54,9 @@ function installApi(options: {
       const event = JSON.parse(String(init.body)) as RecordWordCountEventRequest
       events.push({ projectId: id, event: { ...event } })
       return options.post?.(id, event) ?? jsonResponse({ localDate: event.localDate, dailyWordCount: 10 + event.delta })
+    }
+    if (init?.method === 'PATCH' && url.pathname.endsWith('/writing-settings') && options.patch) {
+      return options.patch(id, JSON.parse(String(init.body)))
     }
     throw new Error(`Unexpected request: ${init?.method} ${url.pathname}`)
   }))
@@ -212,6 +221,44 @@ describe('writing progress', () => {
     expect(store.syncState).toBe('synced')
   })
 
+  test('retains a reopened project acknowledgment when reconciliation fails and reports the failure', async () => {
+    // Catches dropping acknowledged words and reporting synced when the replacement read fails.
+    const eventResponse = deferredResponse()
+    const reconciliation = deferredResponse()
+    let reads = 0
+    const api = installApi({
+      get: () => {
+        reads += 1
+        if (reads === 3) return reconciliation.promise
+        return jsonResponse(progress({ dailyWordCount: reads > 3 ? 15 : 10 }))
+      },
+      post: () => eventResponse.promise,
+    })
+    const store = useWritingProgressStore()
+    await store.load(projectA)
+    store.recordEditorDelta(5)
+    const flushing = store.flush()
+    await store.load(projectA)
+    expect(store.dailyWordCount).toBe(15)
+    eventResponse.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
+    await flushing
+    reconciliation.resolve(jsonResponse({ message: 'Progress unavailable' }, 503))
+    await flushPromises()
+    expect(store.dailyWordCount).toBe(15)
+    expect(store.syncState).toBe('failed')
+    expect(store.errorMessage).toBe('Progress unavailable')
+    // The event really was acknowledged; retain its baseline rather than replaying it.
+    expect(localStorage.getItem(storageKey)).toBeNull()
+    await store.flush()
+    expect(api.events).toHaveLength(1)
+    expect(store.dailyWordCount).toBe(15)
+    expect(store.syncState).toBe('failed')
+    await store.refresh()
+    expect(store.dailyWordCount).toBe(15)
+    expect(store.syncState).toBe('synced')
+    expect(store.errorMessage).toBe('')
+  })
+
   test('ignores late progress and event responses after switching projects', async () => {
     // Catches either asynchronous response replacing the newly opened project's counts.
     const lateProgress = deferredResponse()
@@ -331,6 +378,33 @@ describe('writing progress', () => {
     expect(store.dailyCountMode).toBe('net')
     expect(store.dailyWordCount).toBe(10)
     expect(store.projectWordCount).toBe(1000)
+  })
+
+  test('keeps saved settings when an older refresh resolves and still reconciles its counts', async () => {
+    // Catches an older count refresh reverting net mode and dropping subsequent deletions.
+    const staleRefresh = deferredResponse()
+    let reads = 0
+    const api = installApi({
+      get: () => ++reads === 1 ? jsonResponse(progress()) : staleRefresh.promise,
+      patch: (id, input) => jsonResponse({
+        id, name: 'Manuscript', createdAt: '', updatedAt: '', lastOpenedAt: '', ...input,
+      }),
+    })
+    const store = useWritingProgressStore()
+    await store.load(projectA)
+    const refreshing = store.refresh()
+    await store.updateSettings({ projectWordTarget: 60000, dailyWordTarget: 750, dailyCountMode: 'net' })
+    staleRefresh.resolve(jsonResponse(progress({ projectWordCount: 1010, dailyWordCount: 20 })))
+    await refreshing
+    expect(store.dailyCountMode).toBe('net')
+    expect(store.projectWordTarget).toBe(60000)
+    expect(store.dailyWordTarget).toBe(750)
+    expect(store.projectWordCount).toBe(1010)
+    expect(store.dailyWordCount).toBe(20)
+    store.recordEditorDelta(-5)
+    expect(store.dailyWordCount).toBe(15)
+    await store.flush()
+    expect(api.events[0]?.event.delta).toBe(-5)
   })
 
   test('rejects malformed progress and event responses', async () => {
