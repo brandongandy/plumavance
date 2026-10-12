@@ -81,6 +81,15 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function load(id: string): Promise<void> {
     const sequence = ++loadSequence
+    if (projectId.value !== id) {
+      project.value = null
+      items.value = []
+      trashedItems.value = []
+      searchResults.value = []
+      searchSequence += 1
+      activeItemId.value = null
+      useDocumentStore().clear()
+    }
     projectId.value = id
     const isCurrent = (): boolean => sequence === loadSequence && projectId.value === id
     loading.value = true
