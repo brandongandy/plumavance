@@ -255,6 +255,66 @@ describe('workspace layout', () => {
     }
   })
 
+  test('quarantines the prior project during an accepted switch and shows the new project load failure', async () => {
+    // Catches previous-project binder/editor content rendering under a failed new-project route.
+    let resolveNext!: (response: Response) => void
+    const nextResponse = new Promise<Response>((resolve) => { resolveNext = resolve })
+    let retry = false
+    const wrapper = await mountWorkspace(1280, (url) => {
+      if (url.pathname === `/api/projects/${nextProjectId}` && !retry) return nextResponse
+      return workspaceResponse(url)
+    })
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await wrapper.get('[aria-label="Document title"]').setValue('Discarded old title')
+    const workspace = useWorkspaceStore()
+    const router = wrapper.getComponent(WorkspaceView).vm.$router
+    await router.push(`/projects/${nextProjectId}`)
+    await flushPromises()
+    expect(router.currentRoute.value.params.projectId).toBe(nextProjectId)
+    expect(workspace.project).toBeNull()
+    expect(workspace.items).toEqual([])
+    expect(workspace.trashedItems).toEqual([])
+    expect(workspace.activeItemId).toBeNull()
+    expect(useDocumentStore().documentId).toBeNull()
+    expect(wrapper.find('[aria-label="Document editor"]').exists()).toBe(false)
+    resolveNext(Response.json({ message: 'Next project unavailable' }, { status: 503 }))
+    await flushPromises()
+    expect(workspace.projectId).toBe(nextProjectId)
+    expect(useWritingProgressStore().projectId).toBe(nextProjectId)
+    expect(wrapper.get('[role="alert"]').text()).toContain('Next project unavailable')
+    expect(wrapper.text()).not.toContain('The Long Draft')
+    expect(wrapper.find('[aria-label="Binder"]').exists()).toBe(false)
+    expect(wrapper.get('footer').text()).toContain('No selection')
+    retry = true
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+    expect(workspace.project?.id).toBe(nextProjectId)
+    expect(wrapper.get('[aria-label="Document title"]').element).toHaveProperty('value', 'Chapter Two')
+  })
+
+  test('keeps the current project and dirty buffer when a same-project refresh fails', async () => {
+    // Protects refresh behavior while a different-project switch clears stale content.
+    let failRefresh = false
+    const wrapper = await mountWorkspace(1280, (url) => {
+      if (url.pathname === `/api/projects/${projectId}` && failRefresh) {
+        return Response.json({ message: 'Refresh unavailable' }, { status: 503 })
+      }
+      return workspaceResponse(url)
+    })
+    await wrapper.get('[aria-label="Document title"]').setValue('Still writing')
+    const workspace = useWorkspaceStore()
+    const selected = workspace.activeItemId
+    failRefresh = true
+    await workspace.load(projectId)
+    await flushPromises()
+    expect(workspace.project?.id).toBe(projectId)
+    expect(workspace.items).toHaveLength(2)
+    expect(workspace.activeItemId).toBe(selected)
+    expect(workspace.errorMessage).toBe('Refresh unavailable')
+    expect(wrapper.get('[aria-label="Document title"]').element).toHaveProperty('value', 'Still writing')
+    expect(useDocumentStore().isDirty).toBe(true)
+  })
+
   test('refreshes the saved project aggregate after create, trash, restore, and permanent delete', async () => {
     // Catches binder membership mutations leaving the saved project count stale.
     let aggregate = 100
