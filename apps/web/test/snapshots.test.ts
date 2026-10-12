@@ -9,6 +9,8 @@ import SnapshotCompareDialog from '../src/features/inspector/SnapshotCompareDial
 import { documentApi } from '../src/api/documents.js'
 import { snapshotApi } from '../src/api/snapshots.js'
 import { useDocumentStore } from '../src/stores/document.js'
+import { wordCountApi } from '../src/api/word-count.js'
+import { useWritingProgressStore } from '../src/stores/writing-progress.js'
 
 const documentId = '11111111-1111-4111-8111-111111111111'
 const snapshotId = '22222222-2222-4222-8222-222222222222'
@@ -44,6 +46,7 @@ const snapshotSummaryFixture: SnapshotSummaryDto = {
 }
 
 afterEach(() => {
+  useWritingProgressStore().dispose()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   document.body.innerHTML = ''
@@ -82,6 +85,60 @@ async function mountedInspector() {
 }
 
 describe('snapshot inspector', () => {
+  async function progressForDocument(): Promise<ReturnType<typeof useWritingProgressStore>> {
+    vi.spyOn(wordCountApi, 'getProgress').mockResolvedValueOnce({
+      projectWordCount: 1000, dailyWordCount: 10, localDate: new Date().toLocaleDateString('en-CA'),
+      projectWordTarget: null, dailyWordTarget: null, dailyCountMode: 'additions',
+    }).mockRejectedValue(new Error('Progress unavailable'))
+    const progress = useWritingProgressStore()
+    await progress.load(documentFixture().projectId)
+    return progress
+  }
+
+  test.each([
+    ['Unsaved prose', 2, 999],
+    ['one two three four', 4, 1001],
+  ])('keeps the saved aggregate for %s when normal save succeeds and progress reconciliation fails', async (text, words, total) => {
+    const { store, wrapper } = await mountedInspector()
+    const progress = await progressForDocument()
+    vi.spyOn(documentApi, 'save').mockResolvedValue(documentFixture(text, 3))
+    store.setContent(content(text))
+    expect(progress.liveProjectWordCount(store.counts.words, store.savedWordCount)).toBe(total)
+    await store.save()
+    await progress.refresh()
+    expect(store.savedWordCount).toBe(words)
+    expect(progress.liveProjectWordCount(store.counts.words, store.savedWordCount)).toBe(total)
+    expect(progress.dailyWordCount).toBe(10)
+    wrapper.unmount()
+  })
+
+  test('accounts for Save and Take Snapshot without relying on the workspace Save button', async () => {
+    const { store, wrapper } = await mountedInspector()
+    const progress = await progressForDocument()
+    store.setContent(content('Unsaved prose'))
+    await wrapper.get('button[aria-label="Take snapshot"]').trigger('click')
+    await flushPromises()
+    ;(document.querySelector('button[aria-label="Save and take snapshot"]') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(store.isDirty).toBe(false)
+    expect(progress.liveProjectWordCount(store.counts.words, store.savedWordCount)).toBe(999)
+    expect(progress.dailyWordCount).toBe(10)
+    wrapper.unmount()
+  })
+
+  test('accounts for a restored saved snapshot without counting it as daily activity', async () => {
+    const { store, wrapper } = await mountedInspector()
+    const progress = await progressForDocument()
+    await wrapper.get('button[aria-label="Restore First pass"]').trigger('click')
+    await flushPromises()
+    ;(document.querySelector('button[aria-label="Confirm restore snapshot"]') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(store.contentText).toBe('Earlier prose')
+    expect(progress.liveProjectWordCount(store.counts.words, store.savedWordCount)).toBe(999)
+    expect(progress.dailyWordCount).toBe(10)
+    wrapper.unmount()
+  })
+
   test('accepts_snapshot_summaries_without_content_bodies', async () => {
     const { wrapper, store } = await mountedInspector()
 

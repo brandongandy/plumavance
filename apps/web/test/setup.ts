@@ -1,5 +1,8 @@
 import { config } from '@vue/test-utils'
-import { afterEach } from 'vitest'
+import { afterEach, beforeEach, vi } from 'vitest'
+import { indexedDbFixture } from './indexed-db.js'
+
+beforeEach(() => { vi.stubGlobal('indexedDB', indexedDbFixture()) })
 
 config.global.renderStubDefaultSlot = true
 

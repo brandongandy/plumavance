@@ -9,7 +9,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { wordCountApi } from '../src/api/word-count.js'
+import { binderApi } from '../src/api/binder.js'
+import { useWorkspaceStore } from '../src/stores/workspace.js'
 import { useWritingProgressStore } from '../src/stores/writing-progress.js'
+import { outboxChangedKey, updateOutbox } from '../src/features/word-count/outbox.js'
 
 const projectA = '11111111-1111-4111-8111-111111111111'
 const projectB = '22222222-2222-4222-8222-222222222222'
@@ -74,9 +77,224 @@ afterEach(() => {
   useWritingProgressStore().dispose()
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
 })
 
 describe('writing progress', () => {
+  test('retains the durable pre-send daily baseline when progress and replay both fail after reload', async () => {
+    let reads = 0
+    installApi({
+      get: () => ++reads === 1 ? jsonResponse(progress()) : jsonResponse({ message: 'Offline' }, 503),
+      post: () => jsonResponse({ message: 'Offline' }, 503),
+    })
+    const original = useWritingProgressStore(createPinia())
+    await original.load(projectA)
+    original.recordEditorDelta(5)
+    await original.flush()
+    original.dispose()
+    const recovered = useWritingProgressStore(createPinia())
+    await recovered.load(projectA)
+    await recovered.flush()
+    expect(recovered.dailyWordCount).toBe(15)
+    expect(recovered.syncState).toBe('failed')
+    recovered.dispose()
+  })
+
+  test('an older duplicate acknowledgment cannot replace a newer cross-tab total', async () => {
+    const delayed = deferredResponse()
+    let attempts = 0
+    let total = 10
+    const accepted = new Set<string>()
+    installApi({ get: () => jsonResponse(progress({ dailyWordCount: total })), post: (_id, event) => {
+      if (!accepted.has(event.eventId)) { accepted.add(event.eventId); total += event.delta }
+      attempts += 1
+      return attempts === 1 ? delayed.promise : jsonResponse({ localDate: event.localDate, dailyWordCount: total })
+    } })
+    const tabA = useWritingProgressStore(createPinia())
+    const tabB = useWritingProgressStore(createPinia())
+    await tabA.load(projectA)
+    await tabB.load(projectA)
+    tabA.recordEditorDelta(5)
+    const sendingA = tabA.flush()
+    await flushPromises()
+    tabB.recordEditorDelta(3)
+    await tabB.flush()
+    expect(tabB.dailyWordCount).toBe(18)
+    delayed.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
+    await sendingA
+    await flushPromises()
+    expect(tabA.dailyWordCount).toBe(18)
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('storage notifications refresh another tab from durable activity without dropping optimism', async () => {
+    installApi({ post: () => jsonResponse({ message: 'Offline' }, 503) })
+    const tabA = useWritingProgressStore(createPinia())
+    const tabB = useWritingProgressStore(createPinia())
+    await tabA.load(projectA)
+    await tabB.load(projectA)
+    tabA.recordEditorDelta(5)
+    await flushPromises()
+    expect(tabB.dailyWordCount).toBe(10)
+    window.dispatchEvent(new StorageEvent('storage', { key: outboxChangedKey, newValue: 'other-tab' }))
+    await flushPromises()
+    expect(tabB.dailyWordCount).toBe(15)
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('legacy migration preserves a replacement queue written while the transaction commits', async () => {
+    const oldQueue = JSON.stringify({ inFlight: null, pending: [{ projectId: projectA,
+      eventId: '33333333-3333-4333-8333-333333333333', localDate: '2026-10-12', delta: 5 }] })
+    const replacement = JSON.stringify({ inFlight: null, pending: [{ projectId: projectB,
+      eventId: '44444444-4444-4444-8444-444444444444', localDate: '2026-10-12', delta: 3 }] })
+    localStorage.setItem(storageKey, oldQueue)
+    const getItem = Storage.prototype.getItem
+    let replaced = false
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (key) {
+      const stored = getItem.call(this, key)
+      if (key === storageKey && !replaced) { replaced = true; localStorage.setItem(storageKey, replacement) }
+      return stored
+    })
+    expect((await updateOutbox()).pending[0]?.delta).toBe(5)
+    expect(localStorage.getItem(storageKey)).toBe(replacement)
+  })
+
+  test('keeps transmitted payloads immutable across two tabs and retains the later three words', async () => {
+    const first = deferredResponse()
+    const loadingB = deferredResponse()
+    let reads = 0
+    const accepted = new Set<string>()
+    let total = 10
+    const api = installApi({
+      get: () => ++reads === 2 ? loadingB.promise : jsonResponse(progress({ dailyWordCount: total })),
+      post: (_id, event) => {
+        if (!accepted.has(event.eventId)) { accepted.add(event.eventId); total += event.delta }
+        return event.delta === 5 ? first.promise : jsonResponse({ localDate: event.localDate, dailyWordCount: total })
+      },
+    })
+    const tabA = useWritingProgressStore(createPinia())
+    await tabA.load(projectA)
+    tabA.recordEditorDelta(5)
+    await flushPromises()
+    const tabB = useWritingProgressStore(createPinia())
+    const openingB = tabB.load(projectA)
+    await flushPromises()
+    const sendingA = tabA.flush()
+    tabB.recordEditorDelta(3)
+    void tabB.flush()
+    await flushPromises()
+    const payloads = api.events.map(({ event }) => event)
+    for (const event of payloads) {
+      expect(payloads.filter((candidate) => candidate.eventId === event.eventId).map((candidate) => candidate.delta))
+        .toEqual(Array(payloads.filter((candidate) => candidate.eventId === event.eventId).length).fill(event.delta))
+    }
+    loadingB.resolve(jsonResponse(progress({ dailyWordCount: total })))
+    await openingB
+    first.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: total }))
+    await sendingA
+    await tabB.flush()
+    await tabA.flush()
+    expect(total).toBe(18)
+    await tabB.refresh()
+    expect(tabB.dailyWordCount).toBe(18)
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('does not replace another tab\'s durable queue while persisting its own edits', async () => {
+    installApi({ post: () => jsonResponse({ message: 'Offline' }, 503) })
+    const tabA = useWritingProgressStore(createPinia())
+    const tabB = useWritingProgressStore(createPinia())
+    await tabA.load(projectA)
+    await tabB.load(projectA)
+    tabA.recordEditorDelta(5)
+    tabB.recordEditorDelta(3)
+    await flushPromises()
+    tabA.dispose()
+    tabB.dispose()
+    const recovered = useWritingProgressStore(createPinia())
+    await recovered.load(projectA)
+    expect(recovered.dailyWordCount).toBe(18)
+    recovered.dispose()
+  })
+
+  test('does not overlay an accepted event again after its acknowledgment is lost and replay fails', async () => {
+    const accepted = new Set<string>()
+    let total = 10
+    let offline = true
+    const api = installApi({
+      get: () => jsonResponse(progress({ dailyWordCount: total })),
+      post: (_id, event) => {
+        if (!accepted.has(event.eventId)) { accepted.add(event.eventId); total += event.delta }
+        return offline ? jsonResponse({ message: 'Response lost' }, 503) : jsonResponse({ localDate: event.localDate, dailyWordCount: total })
+      },
+    })
+    const original = useWritingProgressStore()
+    await original.load(projectA)
+    original.recordEditorDelta(5)
+    await original.flush()
+    original.dispose()
+    original.$dispose()
+    setActivePinia(createPinia())
+    const recovered = useWritingProgressStore()
+    await recovered.load(projectA)
+    await recovered.flush()
+    expect(recovered.dailyWordCount).toBe(15)
+    expect(recovered.syncState).toBe('failed')
+    offline = false
+    await recovered.flush()
+    expect(recovered.dailyWordCount).toBe(15)
+    expect(total).toBe(15)
+    expect(new Set(api.events.map(({ event }) => event.eventId)).size).toBe(1)
+    expect(recovered.syncState).toBe('synced')
+  })
+
+  test('discards a deleted project batch so persisted activity for another project can sync', async () => {
+    localStorage.setItem(storageKey, JSON.stringify({ inFlight: {
+      projectId: projectA, eventId: '33333333-3333-4333-8333-333333333333', localDate: '2026-10-12', delta: 5,
+    }, pending: [{ projectId: projectB, eventId: '44444444-4444-4444-8444-444444444444', localDate: '2026-10-12', delta: 3 }] }))
+    const api = installApi({ post: (id, event) => id === projectA
+      ? jsonResponse({ code: 'PROJECT_NOT_FOUND', message: 'Project not found' }, 404)
+      : jsonResponse({ localDate: event.localDate, dailyWordCount: 13 }) })
+    const store = useWritingProgressStore()
+    await store.load(projectB)
+    await store.flush()
+    expect(api.events.map(({ projectId: id }) => id)).toEqual([projectA, projectB])
+    expect(store.dailyWordCount).toBe(13)
+    expect(store.syncState).toBe('synced')
+    expect(localStorage.getItem(storageKey)).toBeNull()
+    expect(await updateOutbox()).toEqual({ inFlight: null, pending: [] })
+  })
+
+  test('seeds net mode and targets from the workspace project when progress cannot load', async () => {
+    installApi({ get: () => jsonResponse({ message: 'Progress unavailable' }, 503) })
+    vi.spyOn(binderApi, 'getProject').mockResolvedValue({ project: {
+      id: projectA, name: 'Manuscript', createdAt: '', updatedAt: '', lastOpenedAt: '',
+      projectWordTarget: 60000, dailyWordTarget: 750, dailyCountMode: 'net',
+    }, items: [], trashedItems: [] })
+    await useWorkspaceStore().load(projectA)
+    const store = useWritingProgressStore()
+    expect(store.dailyCountMode).toBe('net')
+    expect(store.projectWordTarget).toBe(60000)
+    expect(store.dailyWordTarget).toBe(750)
+    store.recordEditorDelta(-5)
+    expect(store.dailyWordCount).toBe(-5)
+  })
+
+  test('records secure v4 event UUIDs when randomUUID is unavailable on an HTTP LAN', async () => {
+    const secureRandom = crypto.getRandomValues.bind(crypto)
+    vi.stubGlobal('crypto', { getRandomValues: secureRandom })
+    const api = installApi()
+    const store = useWritingProgressStore()
+    await store.load(projectA)
+    store.recordEditorDelta(5)
+    await store.flush()
+    expect(api.events[0]?.event.eventId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(store.dailyWordCount).toBe(15)
+  })
+
   test('loads local-date settings and resets Edit Mode', async () => {
     // Catches loading UTC dates or retaining Edit Mode between projects.
     vi.setSystemTime(new Date(2026, 9, 12, 23, 30))
@@ -117,7 +335,7 @@ describe('writing progress', () => {
     await flushPromises()
     expect(store.dailyWordCount).toBe(22)
     expect(store.syncState).toBe('synced')
-    expect(localStorage.getItem(storageKey)).toBeNull()
+    expect(await updateOutbox()).toEqual({ inFlight: null, pending: [] })
   })
 
   test('replays a failed batch after reload with the same UUID', async () => {
@@ -131,7 +349,7 @@ describe('writing progress', () => {
     expect(store.syncState).toBe('failed')
     const original = api.events[0]?.event
     expect(original).toBeDefined()
-    expect(localStorage.getItem(storageKey)).toContain(original?.eventId)
+    expect((await updateOutbox()).inFlight?.eventId).toBe(original?.eventId)
     store.dispose()
     store.$dispose()
     setActivePinia(createPinia())
@@ -139,13 +357,14 @@ describe('writing progress', () => {
     const replayApi = installApi({ post: () => retry.promise })
     const recovered = useWritingProgressStore()
     await recovered.load(projectA)
+    await flushPromises()
     expect(recovered.dailyWordCount).toBe(15)
     expect(replayApi.events[0]?.event).toEqual(original)
     retry.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
     await flushPromises()
     expect(recovered.dailyWordCount).toBe(15)
     expect(recovered.syncState).toBe('synced')
-    expect(localStorage.getItem(storageKey)).toBeNull()
+    expect(await updateOutbox()).toEqual({ inFlight: null, pending: [] })
   })
 
   test('keeps the in-flight event immutable and accumulates a separate pending batch', async () => {
@@ -248,7 +467,7 @@ describe('writing progress', () => {
     expect(store.syncState).toBe('failed')
     expect(store.errorMessage).toBe('Progress unavailable')
     // The event really was acknowledged; retain its baseline rather than replaying it.
-    expect(localStorage.getItem(storageKey)).toBeNull()
+    expect(await updateOutbox()).toEqual({ inFlight: null, pending: [] })
     await store.flush()
     expect(api.events).toHaveLength(1)
     expect(store.dailyWordCount).toBe(15)
@@ -304,7 +523,7 @@ describe('writing progress', () => {
     expect(store.localDate).toBe('2026-10-13')
     expect(store.dailyWordCount).toBe(2)
     expect(api.events[0]?.event).toMatchObject({ localDate: '2026-10-12', delta: 5 })
-    expect(localStorage.getItem(storageKey)).toContain('2026-10-12')
+    expect((await updateOutbox()).inFlight?.localDate).toBe('2026-10-12')
     store.recordEditorDelta(3)
     expect(store.dailyWordCount).toBe(5)
     oldDay.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
@@ -438,6 +657,6 @@ describe('writing progress', () => {
     await vi.advanceTimersByTimeAsync(2000)
     expect(api.events).toHaveLength(0)
     expect(store.localDate).toBe('2026-10-12')
-    expect(localStorage.getItem(storageKey)).toContain('2026-10-12')
+    expect((await updateOutbox()).pending[0]?.localDate).toBe('2026-10-12')
   })
 })

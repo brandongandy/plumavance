@@ -12,6 +12,7 @@ import { ApiRequestError } from '../api/client.js'
 import { documentApi } from '../api/documents.js'
 import { snapshotApi } from '../api/snapshots.js'
 import { countText, editorText } from '../features/editor/counts.js'
+import { useWritingProgressStore } from './writing-progress.js'
 
 export type SaveState = 'saved' | 'unsaved' | 'saving' | 'failed' | 'conflict'
 
@@ -208,6 +209,7 @@ export const useDocumentStore = defineStore('document', () => {
     try {
       const restored = await snapshotApi.restore(snapshotId, expectedRevision)
       if (!isCurrent(id, sequence) || restored.id !== id) return false
+      useWritingProgressStore().accountSavedBody(restored.projectId, savedWordCount.value, countText(editorText(restored.contentJson)).words)
       applyServerDocument(restored)
       return true
     } catch (error) {
@@ -263,6 +265,7 @@ export const useDocumentStore = defineStore('document', () => {
     try {
       const saved = await documentApi.save(id, payload)
       if (!isCurrent(id, sequence) || saved.id !== id) return false
+      useWritingProgressStore().accountSavedBody(saved.projectId, savedWordCount.value, countText(editorText(saved.contentJson)).words)
       revision.value = saved.revision
       savedAt.value = saved.savedAt
       savedBuffer.value = bufferOf(saved)
