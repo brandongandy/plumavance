@@ -104,6 +104,18 @@ afterEach(() => {
 })
 
 describe('project library', () => {
+  test('shows_the_app_logo_before_the_project_overview_title', async () => {
+    const api = createProjectApi([])
+    const { wrapper } = await mountLibrary(api.fetch as typeof fetch)
+    const header = wrapper.get('header')
+    const logo = header.get('[data-app-logo]')
+    const title = header.get('[data-app-title]')
+
+    expect(logo.attributes()).toMatchObject({ alt: '', 'aria-hidden': 'true' })
+    expect(logo.classes()).toEqual(expect.arrayContaining(['h-7', 'w-auto']))
+    expect(logo.element.compareDocumentPosition(title.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   test('shows_the_plumavance_product_name', async () => {
     const api = createProjectApi([])
     const { wrapper } = await mountLibrary(api.fetch as typeof fetch)

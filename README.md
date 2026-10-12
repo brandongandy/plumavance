@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="apps/web/src/assets/plumavance-logo.svg" alt="Plumavance logo" width="220">
+</p>
+
 # Plumavance
 
 Plumavance is a private, self-hosted writing workspace inspired by Scrivener. It combines multiple projects, a hierarchical binder, rich-text documents, notes, manual snapshots, PDF/RTF/Markdown export, and a fullscreen typewriter mode in a compact three-pane interface.
