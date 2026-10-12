@@ -6,6 +6,7 @@ import { binderApi, type MoveItemInput } from '../api/binder.js'
 import { documentApi } from '../api/documents.js'
 import { applyMove } from '../features/binder/useBinderMove.js'
 import { useDocumentStore } from './document.js'
+import { useWritingProgressStore } from './writing-progress.js'
 
 export type WorkspacePanel = 'binder' | 'editor' | 'inspector'
 
@@ -82,7 +83,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     loading.value = true
     errorMessage.value = ''
     try {
-      const detail = await binderApi.getProject(id)
+      const [detail] = await Promise.all([binderApi.getProject(id), useWritingProgressStore().load(id)])
       project.value = detail.project
       items.value = detail.items
       trashedItems.value = detail.trashedItems
@@ -104,6 +105,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       index: created.position,
     })
     activeItemId.value = created.id
+    await useWritingProgressStore().refresh()
   }
 
   async function renameItem(id: string, title: string): Promise<void> {
@@ -131,7 +133,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       })
       saved = true
     }
-    if (saved) items.value = items.value.map((candidate) => candidate.id === id ? { ...candidate, title: trimmed } : candidate)
+    if (saved) {
+      items.value = items.value.map((candidate) => candidate.id === id ? { ...candidate, title: trimmed } : candidate)
+      await useWritingProgressStore().refresh()
+    }
   }
 
   async function moveItem(intent: MoveItemInput): Promise<void> {
@@ -164,6 +169,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     items.value = items.value.filter((item) => !descendantIds.has(item.id))
     trashedItems.value = [trashed, ...trashedItems.value]
     if (descendantIds.has(activeItemId.value ?? '')) activeItemId.value = items.value[0]?.id ?? null
+    await useWritingProgressStore().refresh()
   }
 
   async function restoreItem(id: string): Promise<void> {
@@ -177,11 +183,13 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     activeItemId.value = selected && detail.items.some((item) => item.id === selected)
       ? selected
       : detail.items.find((item) => item.kind === 'document')?.id ?? detail.items[0]?.id ?? null
+    await useWritingProgressStore().refresh()
   }
 
   async function deleteItem(id: string): Promise<void> {
     await binderApi.delete(id)
     trashedItems.value = trashedItems.value.filter((item) => item.id !== id)
+    await useWritingProgressStore().refresh()
   }
 
   async function search(query: string, signal?: AbortSignal): Promise<void> {
