@@ -20,12 +20,14 @@ import { useFocusMode } from '../features/focus/useFocusMode.js'
 import InspectorPane from '../features/inspector/InspectorPane.vue'
 import { useDocumentStore } from '../stores/document.js'
 import { useWorkspaceStore, type WorkspacePanel } from '../stores/workspace.js'
+import { useWritingProgressStore } from '../stores/writing-progress.js'
 
 type WorkspaceLayout = 'desktop' | 'tablet' | 'phone'
 
 const route = useRoute()
 const store = useWorkspaceStore()
 const documentStore = useDocumentStore()
+const writingProgress = useWritingProgressStore()
 const unsavedGuard = useUnsavedGuard(() => documentStore.isDirty)
 const compileTask = useCompile()
 const compileVisible = ref(false)
@@ -94,6 +96,7 @@ async function saveDocument(): Promise<void> {
   store.items = store.items.map((item) =>
     item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
   )
+  await writingProgress.refresh()
 }
 
 async function keepMine(): Promise<void> {
@@ -101,6 +104,7 @@ async function keepMine(): Promise<void> {
   store.items = store.items.map((item) =>
     item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
   )
+  await writingProgress.refresh()
 }
 
 async function reloadServerCopy(): Promise<void> {
@@ -108,6 +112,7 @@ async function reloadServerCopy(): Promise<void> {
   store.items = store.items.map((item) =>
     item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
   )
+  await writingProgress.refresh()
 }
 
 watch(
@@ -121,9 +126,13 @@ watch(
 
 onMounted(() => {
   window.addEventListener('resize', updateLayout)
-  void store.load(String(route.params.projectId))
 })
-onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
+watch(() => route.params.projectId, (projectId) => { void store.load(String(projectId)) }, { immediate: true })
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateLayout)
+  void writingProgress.flush()
+  writingProgress.dispose()
+})
 </script>
 
 <template>
@@ -173,6 +182,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
                 :focus-mode="focusMode.isActive.value"
                 @update:model-value="documentStore.setContent"
                 @save="saveDocument"
+                @word-count-delta="writingProgress.recordEditorDelta"
               />
             </template>
           </div>
@@ -198,6 +208,7 @@ onBeforeUnmount(() => window.removeEventListener('resize', updateLayout))
       :save-state="documentStore.saveState"
       :words="documentStore.counts.words"
       :characters="documentStore.counts.characters"
+      :project-words="writingProgress.liveProjectWordCount(documentStore.counts.words, documentStore.savedWordCount)"
     />
     <CompileDialog
       :visible="compileVisible"

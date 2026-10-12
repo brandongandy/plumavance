@@ -55,6 +55,172 @@ button {
   background: var(--color-app);
 }
 
+.workspace-status-bar {
+  position: relative;
+}
+
+.workspace-status-title {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  margin-right: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-status-bar > .font-mono {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.writing-progress-control {
+  display: flex;
+  min-width: 82px;
+  max-width: 360px;
+  flex: 1 1 280px;
+  align-items: center;
+  gap: 6px;
+  margin-right: 12px;
+}
+
+.writing-progress-anchor {
+  position: relative;
+  min-width: 12px;
+  flex: 1;
+}
+
+.writing-progress-trigger {
+  display: flex;
+  width: 100%;
+  height: 24px;
+  align-items: center;
+  padding: 0;
+}
+
+.writing-progress-track {
+  display: block;
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  background: var(--color-app);
+}
+
+.writing-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-success);
+  transition: width 150ms ease;
+}
+
+.writing-edit-mode {
+  height: 22px;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  padding: 0 5px;
+  color: var(--color-muted);
+  font-size: 10px;
+}
+
+.writing-edit-mode.is-enabled {
+  border-color: var(--color-focus);
+  background: color-mix(in srgb, var(--color-focus) 25%, var(--color-app));
+  color: var(--color-text);
+}
+
+.writing-progress-tooltip,
+.writing-progress-popover {
+  position: absolute;
+  z-index: 30;
+  bottom: 28px;
+  left: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  background: var(--color-chrome);
+  padding: 6px 8px;
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.writing-progress-tooltip {
+  pointer-events: none;
+  white-space: nowrap;
+  font-family: var(--font-code);
+}
+
+.writing-progress-popover {
+  z-index: 31;
+  width: min(292px, calc(100vw - 24px));
+  padding: 12px;
+}
+
+.writing-progress-form {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.writing-progress-form input,
+.writing-progress-form select {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  background: var(--color-app);
+  padding: 0 5px;
+  color: var(--color-text);
+}
+
+.writing-progress-hint,
+.writing-progress-sync,
+.writing-progress-error,
+.writing-progress-actions {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.writing-progress-hint,
+.writing-progress-sync {
+  color: var(--color-muted);
+  font-size: 11px;
+}
+
+.writing-progress-error {
+  color: var(--color-danger);
+}
+
+.writing-progress-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.writing-progress-actions button {
+  min-height: 28px;
+  border: 1px solid var(--color-border);
+  padding: 0 8px;
+}
+
+@media (max-width: 767px) {
+  .workspace-status-bar {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .workspace-status-title {
+    max-width: 0;
+    margin-right: 0;
+  }
+
+  .writing-progress-control {
+    margin-right: 6px;
+  }
+}
+
 .workspace-toolbar-button,
 .workspace-icon-button {
   min-height: 32px;

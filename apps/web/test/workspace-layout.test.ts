@@ -2,10 +2,15 @@ import axeCore from 'axe-core'
 import PrimeVue from 'primevue/config'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia } from 'pinia'
+import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import WorkspaceView from '../src/views/WorkspaceView.vue'
+import DocumentEditor from '../src/features/editor/DocumentEditor.vue'
+import { useDocumentStore } from '../src/stores/document.js'
+import { useWritingProgressStore } from '../src/stores/writing-progress.js'
+import { useWorkspaceStore } from '../src/stores/workspace.js'
 
 const projectId = '11111111-1111-4111-8111-111111111111'
 
@@ -49,9 +54,15 @@ function projectResponse(): Response {
   })
 }
 
-async function mountWorkspace(width = 1280): Promise<VueWrapper> {
+const wrappers: VueWrapper[] = []
+
+async function mountWorkspace(width = 1280, handler?: (url: URL, init?: RequestInit) => Response | Promise<Response>): Promise<VueWrapper> {
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
-  vi.stubGlobal('fetch', vi.fn(async () => projectResponse()))
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    if (handler) return handler(url, init)
+    return workspaceResponse(url)
+  }))
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -66,10 +77,26 @@ async function mountWorkspace(width = 1280): Promise<VueWrapper> {
     global: { plugins: [router, createPinia(), [PrimeVue, { unstyled: true }]] },
   })
   await flushPromises()
+  wrappers.push(wrapper)
   return wrapper
 }
 
+function workspaceResponse(url: URL): Response {
+  if (url.pathname.endsWith('/writing-progress')) return Response.json({
+    projectWordTarget: null, dailyWordTarget: null, dailyCountMode: 'additions',
+    projectWordCount: 100, dailyWordCount: 10, localDate: url.searchParams.get('localDate'),
+  })
+  if (url.pathname.endsWith('/snapshots')) return Response.json([])
+  if (url.pathname.startsWith('/api/documents/')) return Response.json({
+    id: '33333333-3333-4333-8333-333333333333', projectId, title: 'Chapter One', notesText: '', revision: 0,
+    savedAt: '2026-10-10T00:00:00.000Z', contentText: 'Saved prose',
+    contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Saved prose' }] }] },
+  })
+  return projectResponse()
+}
+
 afterEach(() => {
+  wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   vi.unstubAllGlobals()
   localStorage.clear()
 })
@@ -147,5 +174,89 @@ describe('workspace layout', () => {
     const contents = wrapper.get('[aria-label="Contents of Manuscript"]')
     expect(contents.text()).toContain('Chapter One')
     expect(contents.text()).not.toContain('No items')
+  })
+
+  test('loads progress, overlays unsaved prose, records editor activity, and refreshes after a successful save', async () => {
+    // Catches missing lifecycle/event wiring and the saved baseline being double-counted after save.
+    let aggregate = 100
+    const wrapper = await mountWorkspace(1280, async (url, init) => {
+      if (url.pathname.endsWith('/writing-progress')) return Response.json({
+        projectWordTarget: null, dailyWordTarget: 1000, dailyCountMode: 'additions',
+        projectWordCount: aggregate, dailyWordCount: 10, localDate: url.searchParams.get('localDate'),
+      })
+      if (init?.method === 'PUT') {
+        const input = JSON.parse(String(init.body))
+        aggregate = 102
+        return Response.json({ ...await workspaceResponse(url).json(), ...input, revision: 1 })
+      }
+      return workspaceResponse(url)
+    })
+    const trigger = wrapper.get('[aria-label="Writing progress settings"]')
+    await trigger.trigger('mouseenter')
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('100 words | 10 words')
+    useDocumentStore().setContent({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Saved prose and more' }] }] })
+    wrapper.getComponent(DocumentEditor).vm.$emit('word-count-delta', 2)
+    await nextTick()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('102 words | 12 words')
+    await wrapper.get('[aria-label="Save document"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('102 words | 12 words')
+    expect(wrapper.get('footer').text()).toContain('4 words · 20 characters')
+  })
+
+  test('resets Edit Mode when another project opens and cleans up workspace progress', async () => {
+    const wrapper = await mountWorkspace()
+    await wrapper.get('[role="switch"][aria-label="Edit Mode"]').trigger('click')
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+    const router = wrapper.getComponent(WorkspaceView).vm.$router
+    await router.push('/projects/44444444-4444-4444-8444-444444444444')
+    await flushPromises()
+    expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('false')
+    expect(useWritingProgressStore().projectId).toBe('44444444-4444-4444-8444-444444444444')
+    wrapper.unmount()
+    const before = useWritingProgressStore().dailyWordCount
+    useWritingProgressStore().recordEditorDelta(3)
+    expect(useWritingProgressStore().dailyWordCount).toBe(before)
+  })
+
+  test('refreshes the saved project aggregate after create, trash, restore, and permanent delete', async () => {
+    // Catches binder membership mutations leaving the saved project count stale.
+    let aggregate = 100
+    const detail = await projectResponse().json()
+    const item = { ...detail.items[1], id: '55555555-5555-4555-8555-555555555555', title: 'New chapter' }
+    const wrapper = await mountWorkspace(1280, (url, init) => {
+      if (url.pathname.endsWith('/writing-progress')) return Response.json({
+        projectWordTarget: null, dailyWordTarget: null, dailyCountMode: 'additions',
+        projectWordCount: aggregate, dailyWordCount: 10, localDate: url.searchParams.get('localDate'),
+      })
+      if (url.pathname.endsWith('/items') && init?.method === 'POST') { aggregate = 120; return Response.json(item) }
+      if (url.pathname.endsWith('/trash')) { aggregate = 100; return Response.json({ ...item, trashedAt: '2026-10-12T00:00:00Z' }) }
+      if (url.pathname.endsWith('/restore')) { aggregate = 120; return Response.json(item) }
+      if (init?.method === 'DELETE') { aggregate = 99; return new Response(null, { status: 204 }) }
+      return workspaceResponse(url)
+    })
+    const workspace = useWorkspaceStore()
+    await wrapper.get('[aria-label="Writing progress settings"]').trigger('mouseenter')
+    await workspace.createItem('document', null)
+    await flushPromises()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('120 words | 10 words')
+    await workspace.trashItem(item.id)
+    await flushPromises()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('100 words | 10 words')
+    await workspace.restoreItem(item.id)
+    await flushPromises()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('120 words | 10 words')
+    await workspace.deleteItem(item.id)
+    await flushPromises()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('99 words | 10 words')
+  })
+
+  test('the open writing settings popover has no accessibility violations', async () => {
+    const wrapper = await mountWorkspace()
+    await wrapper.get('[aria-label="Writing progress settings"]').trigger('click')
+    const results = await axeCore.run(document.body, {
+      rules: { 'color-contrast': { enabled: false }, 'color-contrast-enhanced': { enabled: false } },
+    })
+    expect(results.violations).toEqual([])
   })
 })
