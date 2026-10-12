@@ -2,7 +2,7 @@ import {
   CreateSnapshotRequestSchema,
   RenameSnapshotRequestSchema,
   RestoreSnapshotRequestSchema,
-} from '@scr/shared'
+} from '@pluma/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 

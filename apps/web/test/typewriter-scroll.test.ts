@@ -23,13 +23,25 @@ describe('typewriter scrolling', () => {
     expect(scrollBy).toHaveBeenCalledWith({ top: 120, behavior: 'auto' })
   })
 
-  test('restarts_after_manual_scroll_only_on_the_next_keyboard_edit', () => {
+  test('restarts_after_manual_scroll_without_animating_each_keyboard_edit', () => {
     const container = document.createElement('div'); const target = document.createElement('p'); container.append(target)
     const scrollBy = vi.fn(); Object.defineProperty(container, 'scrollBy', { value: scrollBy })
     vi.spyOn(container, 'getBoundingClientRect').mockReturnValue({ top: 0, bottom: 600, height: 600, left: 0, right: 0, width: 0, x: 0, y: 0, toJSON: () => ({}) })
     vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 400, bottom: 440, height: 40, left: 0, right: 0, width: 0, x: 0, y: 400, toJSON: () => ({}) })
     const typewriter = useTypewriterScroll(ref(container), { reducedMotion: false })
     typewriter.noteManualScroll(); expect(scrollBy).not.toHaveBeenCalled()
-    typewriter.onKeyboardEdit(target); expect(scrollBy).toHaveBeenCalledWith({ top: 120, behavior: 'smooth' })
+    typewriter.onKeyboardEdit(target); expect(scrollBy).toHaveBeenCalledWith({ top: 120, behavior: 'auto' })
+  })
+
+  test('ignores_subpixel_keyboard_recentering_that_would_make_text_bounce', () => {
+    const container = document.createElement('div'); const target = document.createElement('p'); container.append(target)
+    const scrollBy = vi.fn(); Object.defineProperty(container, 'scrollBy', { value: scrollBy })
+    vi.spyOn(container, 'getBoundingClientRect').mockReturnValue({ top: 0, bottom: 600, height: 600, left: 0, right: 0, width: 0, x: 0, y: 0, toJSON: () => ({}) })
+    vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({ top: 279.75, bottom: 319.75, height: 40, left: 0, right: 0, width: 0, x: 0, y: 279.75, toJSON: () => ({}) })
+    const typewriter = useTypewriterScroll(ref(container), { reducedMotion: false })
+
+    typewriter.onKeyboardEdit(target)
+
+    expect(scrollBy).not.toHaveBeenCalled()
   })
 })

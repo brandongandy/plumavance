@@ -3,7 +3,7 @@ import type {
   BinderItemKind,
   ProjectDetailDto,
   SearchResultDto,
-} from '@scr/shared'
+} from '@pluma/shared'
 import { z } from 'zod'
 
 import { apiRequest, apiRequestEmpty } from './client.js'
@@ -49,10 +49,10 @@ export interface MoveItemInput {
 export const binderApi = {
   getProject: (projectId: string): Promise<ProjectDetailDto> =>
     apiRequest(`/api/projects/${projectId}`, { method: 'GET' }, ProjectDetailSchema),
-  search: (projectId: string, query: string): Promise<SearchResultDto[]> =>
+  search: (projectId: string, query: string, signal?: AbortSignal): Promise<SearchResultDto[]> =>
     apiRequest(
       `/api/projects/${projectId}/search?q=${encodeURIComponent(query)}`,
-      { method: 'GET' },
+      { method: 'GET', ...(signal ? { signal } : {}) },
       z.array(SearchResultSchema),
     ),
   create: (

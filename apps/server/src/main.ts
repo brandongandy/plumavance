@@ -3,7 +3,11 @@ import { createApp } from './app.js'
 
 const config = loadConfig()
 await ensureDataDirectory(config.dataDirectory)
-const app = await createApp({ databasePath: config.databasePath, staticRoot: config.staticRoot })
+const app = await createApp({
+  databasePath: config.databasePath,
+  staticRoot: config.staticRoot,
+  logger: true,
+})
 
 const shutdown = async (): Promise<void> => {
   await app.close()

@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import type { CompileFormat, CompileRequest } from '@scr/shared'
+import type { CompileExportType, CompileFormat, CompileRequest, EreaderFont, PaperbackPageSize } from '@pluma/shared'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
-import InputText from 'primevue/inputtext'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 
 import { useWorkspaceStore } from '../../stores/workspace.js'
+import CompileOptions from './CompileOptions.vue'
 import CompileOrder from './CompileOrder.vue'
 import CompileSelectionTree from './CompileSelectionTree.vue'
 
@@ -13,11 +13,16 @@ const props = withDefaults(defineProps<{ visible: boolean; dirty: boolean; busy?
 const emit = defineEmits<{ close: []; save: []; compile: [request: CompileRequest] }>()
 const store = useWorkspaceStore()
 const selectedIds = ref<string[]>([])
-const format = ref<CompileFormat>('pdf')
-const includeTitles = ref(true)
-const separateDocuments = ref(true)
-const filename = ref(store.project?.name ?? 'Manuscript')
-const gateResolved = ref(!props.dirty)
+const exportType = shallowRef<CompileExportType>('manuscript')
+const format = shallowRef<CompileFormat>('pdf')
+const font = shallowRef<EreaderFont>('serif')
+const pageSize = shallowRef<PaperbackPageSize>('digest')
+const includeTitles = shallowRef(true)
+const includeFolderTitles = shallowRef(true)
+const sceneSeparator = shallowRef('#')
+const chapterPageBreaks = shallowRef(true)
+const filename = shallowRef(store.project?.name ?? 'Manuscript')
+const gateResolved = shallowRef(!props.dirty)
 
 watch(() => props.visible, (visible) => {
   if (!visible) return
@@ -46,18 +51,29 @@ const orderedDocuments = computed(() => {
 
 function submit(): void {
   if (!filename.value.trim() || orderedDocuments.value.length === 0) return
-  emit('compile', {
+  const common = {
     itemIds: selectedIds.value,
-    format: format.value,
     includeTitles: includeTitles.value,
-    separateDocuments: separateDocuments.value,
+    includeFolderTitles: includeFolderTitles.value,
+    sceneSeparator: sceneSeparator.value,
+    chapterPageBreaks: chapterPageBreaks.value,
     filename: filename.value.trim(),
-  })
+  }
+  const request: CompileRequest = exportType.value === 'ereader'
+    ? {
+        ...common,
+        exportType: 'ereader',
+        format: format.value === 'epub' ? 'epub' : 'pdf',
+        font: font.value,
+        ...(format.value === 'pdf' ? { pageSize: pageSize.value } : {}),
+      }
+    : { ...common, exportType: 'manuscript', format: format.value === 'rtf' || format.value === 'markdown' ? format.value : 'pdf' }
+  emit('compile', request)
 }
 </script>
 
 <template>
-  <Dialog :visible="visible" modal header="Compile" :draggable="false" class="scr-dialog compile-dialog" @update:visible="!$event && emit('close')">
+  <Dialog :visible="visible" modal header="Compile" :draggable="false" class="pluma-dialog compile-dialog" @update:visible="!$event && emit('close')">
     <div v-if="dirty && !gateResolved" class="compile-dirty-gate">
       <p>Save changes before compiling?</p>
       <div>
@@ -71,12 +87,17 @@ function submit(): void {
         <CompileSelectionTree v-model="selectedIds" :items="store.items" />
         <CompileOrder :documents="orderedDocuments" />
       </div>
-      <div class="compile-options">
-        <fieldset><legend>Format</legend><label v-for="value in (['pdf', 'rtf', 'markdown'] as const)" :key="value"><input v-model="format" type="radio" name="compile-format" :value="value" /> {{ value === 'markdown' ? 'Markdown' : value.toUpperCase() }}</label></fieldset>
-        <label><input v-model="includeTitles" type="checkbox" /> Include document titles</label>
-        <label><input v-model="separateDocuments" type="checkbox" /> {{ format === 'markdown' ? 'Separate documents with a rule' : 'Start documents on new pages' }}</label>
-        <label class="dialog-field"><span>Filename</span><InputText v-model="filename" aria-label="Export filename" maxlength="200" /></label>
-      </div>
+      <CompileOptions
+        v-model:export-type="exportType"
+        v-model:format="format"
+        v-model:font="font"
+        v-model:page-size="pageSize"
+        v-model:include-titles="includeTitles"
+        v-model:include-folder-titles="includeFolderTitles"
+        v-model:scene-separator="sceneSeparator"
+        v-model:chapter-page-breaks="chapterPageBreaks"
+        v-model:filename="filename"
+      />
     </template>
     <p v-if="error" role="alert" class="compile-error">{{ error }}</p>
     <p v-if="busy" role="status">Compiling…</p>

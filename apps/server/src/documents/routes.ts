@@ -1,4 +1,4 @@
-import { SaveDocumentRequestSchema, SearchQuerySchema } from '@scr/shared'
+import { SaveDocumentRequestSchema, SearchQuerySchema } from '@pluma/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 

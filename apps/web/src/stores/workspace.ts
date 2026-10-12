@@ -1,4 +1,4 @@
-import type { BinderItemDto, BinderItemKind, ProjectDto, SearchResultDto } from '@scr/shared'
+import type { BinderItemDto, BinderItemKind, ProjectDto, SearchResultDto } from '@pluma/shared'
 import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 
@@ -16,7 +16,7 @@ interface WorkspacePreferences {
   inspectorOpen: boolean
 }
 
-const preferenceKey = 'scr.workspace.preferences'
+const preferenceKey = 'pluma.workspace.preferences'
 const defaults: WorkspacePreferences = {
   binderWidth: 240,
   inspectorWidth: 280,
@@ -184,7 +184,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     trashedItems.value = trashedItems.value.filter((item) => item.id !== id)
   }
 
-  async function search(query: string): Promise<void> {
+  async function search(query: string, signal?: AbortSignal): Promise<void> {
     const normalized = query.trim()
     const sequence = ++searchSequence
     if (!normalized) {
@@ -192,9 +192,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return
     }
     try {
-      const results = await binderApi.search(projectId.value, normalized)
+      const results = await binderApi.search(projectId.value, normalized, signal)
       if (sequence === searchSequence) searchResults.value = results
     } catch (error) {
+      if (signal?.aborted) return
       if (sequence === searchSequence) errorMessage.value = errorText(error, 'Search failed.')
     }
   }

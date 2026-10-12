@@ -1,4 +1,4 @@
-import type { CompileRequest } from '@scr/shared'
+import type { CompileRequest } from '@pluma/shared'
 import { ref, type Ref } from 'vue'
 
 import { requestCompile } from '../../api/compile.js'

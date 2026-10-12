@@ -24,7 +24,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
   const dataDirectory = resolve(parsed.DATA_DIR)
   return {
     dataDirectory,
-    databasePath: resolve(dataDirectory, 'scr.sqlite'),
+    databasePath: resolve(dataDirectory, 'pluma.sqlite'),
     host: parsed.HOST,
     port: parsed.PORT,
     staticRoot: resolve(parsed.STATIC_ROOT),

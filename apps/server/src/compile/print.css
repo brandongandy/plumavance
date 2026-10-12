@@ -1,4 +1,4 @@
 body { font: 12pt Georgia, serif; line-height: 1.5; }
 section { break-inside: auto; }
-.document-break { break-before: page; }
+.chapter-break { break-before: page; }
 h1, h2, h3 { break-after: avoid; }

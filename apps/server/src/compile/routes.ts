@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs'
 
-import { CompileRequestSchema } from '@scr/shared'
+import { CompileRequestSchema } from '@pluma/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 

@@ -4,12 +4,13 @@ import type {
   BinderItemDto,
   CreateBinderItemRequest,
   MoveBinderItemRequest,
-} from '@scr/shared'
+} from '@pluma/shared'
 
 import { ApiError } from '../http/errors.js'
 import type { ProjectRepository } from '../projects/repository.js'
 import type { BinderRepository } from './repository.js'
 import {
+  collectTrashedIds,
   hasTrashedAncestor,
   isDescendant,
   partitionBinder,
@@ -56,18 +57,22 @@ export function createBinderService(
     return item
   }
 
-  const activeOrThrow = (id: string): { item: BinderRecord; records: BinderRecord[] } => {
+  const activeOrThrow = (
+    id: string,
+  ): { item: BinderRecord; records: BinderRecord[]; trashedIds: Set<string> } => {
     const item = findOrThrow(id)
     const records = repository.listByProject(item.projectId)
-    if (hasTrashedAncestor(item, records)) {
+    const trashedIds = collectTrashedIds(records)
+    if (trashedIds.has(item.id)) {
       throw new ApiError(409, 'BINDER_ITEM_TRASHED', 'Binder item is in Trash.')
     }
-    return { item, records }
+    return { item, records, trashedIds }
   }
 
   const siblings = (
     records: BinderRecord[],
     parentId: string | null,
+    trashedIds: ReadonlySet<string>,
     excludingId?: string,
   ): BinderRecord[] =>
     records
@@ -75,26 +80,28 @@ export function createBinderService(
         (candidate) =>
           candidate.parentId === parentId &&
           candidate.id !== excludingId &&
-          !hasTrashedAncestor(candidate, records),
+          !trashedIds.has(candidate.id),
       )
       .sort((left, right) => left.position - right.position || left.id.localeCompare(right.id))
 
-  const renumber = (items: BinderRecord[], now: string): void => {
-    items.forEach((item, position) => repository.setLocation(item.id, item.parentId, position, now))
-  }
+  const locations = (
+    items: BinderRecord[],
+  ): Array<{ id: string; parentId: string | null; position: number }> =>
+    items.map((item, position) => ({ id: item.id, parentId: item.parentId, position }))
 
   const validateParent = (
     item: BinderRecord | undefined,
     projectId: string,
     parentId: string | null,
     records: BinderRecord[],
+    trashedIds: ReadonlySet<string>,
   ): BinderRecord | undefined => {
     if (!parentId) return undefined
     const parent = records.find((candidate) => candidate.id === parentId)
     if (!parent || parent.projectId !== projectId) {
       throw new ApiError(409, 'INVALID_BINDER_PARENT', 'Parent must belong to the same project.')
     }
-    if (parent.kind !== 'folder' || hasTrashedAncestor(parent, records)) {
+    if (parent.kind !== 'folder' || trashedIds.has(parent.id)) {
       throw new ApiError(409, 'INVALID_BINDER_PARENT', 'Parent must be an active folder.')
     }
     if (item && (parent.id === item.id || isDescendant(parent.id, item.id, records))) {
@@ -119,9 +126,10 @@ export function createBinderService(
         throw new ApiError(404, 'PROJECT_NOT_FOUND', 'Project not found.')
       }
       const records = repository.listByProject(projectId)
-      validateParent(undefined, projectId, input.parentId, records)
+      const trashedIds = collectTrashedIds(records)
+      validateParent(undefined, projectId, input.parentId, records, trashedIds)
       const now = clock().toISOString()
-      const position = siblings(records, input.parentId).length
+      const position = siblings(records, input.parentId, trashedIds).length
       return toDto(
         repository.transaction(() =>
           repository.create({
@@ -146,9 +154,9 @@ export function createBinderService(
       return toDto(repository.rename(itemId, title, clock().toISOString()) as BinderRecord)
     },
     move(input) {
-      const { item, records } = activeOrThrow(input.itemId)
-      validateParent(item, item.projectId, input.parentId, records)
-      const destination = siblings(records, input.parentId, item.id)
+      const { item, records, trashedIds } = activeOrThrow(input.itemId)
+      validateParent(item, item.projectId, input.parentId, records, trashedIds)
+      const destination = siblings(records, input.parentId, trashedIds, item.id)
       if (input.index > destination.length) {
         throw new ApiError(409, 'INVALID_BINDER_INDEX', 'Move index is outside the destination.')
       }
@@ -156,20 +164,22 @@ export function createBinderService(
       const now = clock().toISOString()
 
       return repository.transaction(() => {
+        const locationUpdates = []
         if (sourceParentId !== input.parentId) {
-          renumber(siblings(records, sourceParentId, item.id), now)
+          locationUpdates.push(...locations(siblings(records, sourceParentId, trashedIds, item.id)))
         }
         const moved = { ...item, parentId: input.parentId }
         destination.splice(input.index, 0, moved)
-        renumber(destination, now)
+        locationUpdates.push(...locations(destination))
+        repository.setLocations(locationUpdates, now)
         return toDto(findOrThrow(item.id))
       })
     },
     trash(itemId) {
-      const { item, records } = activeOrThrow(itemId)
+      const { item, records, trashedIds } = activeOrThrow(itemId)
       const now = clock().toISOString()
       return repository.transaction(() => {
-        renumber(siblings(records, item.parentId, item.id), now)
+        repository.setLocations(locations(siblings(records, item.parentId, trashedIds, item.id)), now)
         repository.setTrash(item.id, {
           parentId: null,
           position: item.position,
@@ -187,14 +197,15 @@ export function createBinderService(
         throw new ApiError(409, 'BINDER_ITEM_NOT_TRASHED', 'Only a Trash root can be restored.')
       }
       const records = repository.listByProject(item.projectId)
+      const trashedIds = collectTrashedIds(records)
       const originalParent = item.trashedParentId
         ? records.find((candidate) => candidate.id === item.trashedParentId)
         : undefined
       const parentId =
-        originalParent?.kind === 'folder' && !hasTrashedAncestor(originalParent, records)
+        originalParent?.kind === 'folder' && !trashedIds.has(originalParent.id)
           ? originalParent.id
           : null
-      const destination = siblings(records, parentId, item.id)
+      const destination = siblings(records, parentId, trashedIds, item.id)
       const index = Math.min(item.trashedPosition ?? destination.length, destination.length)
       const now = clock().toISOString()
       return repository.transaction(() => {
@@ -208,7 +219,7 @@ export function createBinderService(
         })
         const restored = findOrThrow(item.id)
         destination.splice(index, 0, restored)
-        renumber(destination, now)
+        repository.setLocations(locations(destination), now)
         return toDto(findOrThrow(item.id))
       })
     },

@@ -1,4 +1,10 @@
-import type { DocumentDto, EditorDocument, SaveDocumentRequest, SnapshotDto } from '@scr/shared'
+import type {
+  DocumentDto,
+  EditorDocument,
+  SaveDocumentRequest,
+  SnapshotDto,
+  SnapshotSummaryDto,
+} from '@pluma/shared'
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
@@ -46,8 +52,9 @@ export const useDocumentStore = defineStore('document', () => {
   const conflict = ref<ConflictMetadata | null>(null)
   const errorMessage = ref('')
   const loading = ref(false)
-  const snapshots = ref<SnapshotDto[]>([])
+  const snapshots = ref<SnapshotSummaryDto[]>([])
   let loadSequence = 0
+  let snapshotDetailSequence = 0
 
   const isCurrent = (id: string, sequence: number): boolean =>
     documentId.value === id && loadSequence === sequence
@@ -165,6 +172,29 @@ export const useDocumentStore = defineStore('document', () => {
     snapshots.value = snapshots.value.map((snapshot) =>
       snapshot.id === renamed.id ? renamed : snapshot,
     )
+  }
+
+  async function loadSnapshotDetail(snapshotId: string): Promise<SnapshotDto | undefined> {
+    const id = documentId.value
+    const sequence = loadSequence
+    const detailSequence = ++snapshotDetailSequence
+    if (!id || !snapshots.value.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === id)) {
+      return undefined
+    }
+    try {
+      const snapshot = await snapshotApi.get(snapshotId)
+      if (
+        !isCurrent(id, sequence) ||
+        detailSequence !== snapshotDetailSequence ||
+        snapshot.documentId !== id
+      ) return undefined
+      return snapshot
+    } catch (error) {
+      if (isCurrent(id, sequence) && detailSequence === snapshotDetailSequence) {
+        errorMessage.value = error instanceof Error ? error.message : 'The snapshot could not be loaded.'
+      }
+      return undefined
+    }
   }
 
   async function restoreSnapshot(snapshotId: string): Promise<boolean> {
@@ -300,6 +330,7 @@ export const useDocumentStore = defineStore('document', () => {
     loadSnapshots,
     takeSnapshot,
     renameSnapshot,
+    loadSnapshotDetail,
     restoreSnapshot,
     deleteSnapshot,
   }

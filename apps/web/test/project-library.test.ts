@@ -104,6 +104,13 @@ afterEach(() => {
 })
 
 describe('project library', () => {
+  test('shows_the_plumavance_product_name', async () => {
+    const api = createProjectApi([])
+    const { wrapper } = await mountLibrary(api.fetch as typeof fetch)
+
+    expect(wrapper.get('header').text()).toContain('Plumavance')
+  })
+
   test('renders_the_compact_server_order_and_opens_a_project', async () => {
     const api = createProjectApi()
     const { wrapper, router } = await mountLibrary(api.fetch as typeof fetch)

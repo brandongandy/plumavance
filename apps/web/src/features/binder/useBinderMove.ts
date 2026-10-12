@@ -1,4 +1,4 @@
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 
 import type { MoveItemInput } from '../../api/binder.js'
 

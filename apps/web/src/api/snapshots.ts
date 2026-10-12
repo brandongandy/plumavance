@@ -1,4 +1,9 @@
-import { EditorDocumentSchema, type DocumentDto, type SnapshotDto } from '@scr/shared'
+import {
+  EditorDocumentSchema,
+  type DocumentDto,
+  type SnapshotDto,
+  type SnapshotSummaryDto,
+} from '@pluma/shared'
 import { z } from 'zod'
 
 import { apiRequest, apiRequestEmpty } from './client.js'
@@ -9,6 +14,14 @@ const SnapshotSchema: z.ZodType<SnapshotDto> = z.object({
   name: z.string().nullable(),
   contentJson: EditorDocumentSchema,
   contentText: z.string(),
+  createdAt: z.string(),
+})
+
+const SnapshotSummarySchema: z.ZodType<SnapshotSummaryDto> = z.object({
+  id: z.string(),
+  documentId: z.string(),
+  name: z.string().nullable(),
+  wordCount: z.number().int().nonnegative(),
   createdAt: z.string(),
 })
 
@@ -24,21 +37,21 @@ const DocumentSchema: z.ZodType<DocumentDto> = z.object({
 })
 
 export const snapshotApi = {
-  list: (documentId: string): Promise<SnapshotDto[]> =>
-    apiRequest(`/api/documents/${documentId}/snapshots`, { method: 'GET' }, z.array(SnapshotSchema)),
-  create: (documentId: string, name?: string): Promise<SnapshotDto> =>
+  list: (documentId: string): Promise<SnapshotSummaryDto[]> =>
+    apiRequest(`/api/documents/${documentId}/snapshots`, { method: 'GET' }, z.array(SnapshotSummarySchema)),
+  create: (documentId: string, name?: string): Promise<SnapshotSummaryDto> =>
     apiRequest(
       `/api/documents/${documentId}/snapshots`,
       { method: 'POST', body: JSON.stringify(name === undefined ? {} : { name }) },
-      SnapshotSchema,
+      SnapshotSummarySchema,
     ),
   get: (snapshotId: string): Promise<SnapshotDto> =>
     apiRequest(`/api/snapshots/${snapshotId}`, { method: 'GET' }, SnapshotSchema),
-  rename: (snapshotId: string, name: string): Promise<SnapshotDto> =>
+  rename: (snapshotId: string, name: string): Promise<SnapshotSummaryDto> =>
     apiRequest(
       `/api/snapshots/${snapshotId}`,
       { method: 'PATCH', body: JSON.stringify({ name }) },
-      SnapshotSchema,
+      SnapshotSummarySchema,
     ),
   restore: (snapshotId: string, expectedRevision: number): Promise<DocumentDto> =>
     apiRequest(

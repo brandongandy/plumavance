@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { ProjectDto } from '@scr/shared'
+import type { ProjectDto } from '@pluma/shared'
 
 import { ApiError } from '../http/errors.js'
 import type { ProjectRepository } from './repository.js'

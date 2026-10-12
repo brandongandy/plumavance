@@ -31,7 +31,7 @@ watch(
     modal
     :header="mode === 'rename' ? 'Rename Snapshot' : 'Take Snapshot'"
     :draggable="false"
-    class="scr-dialog"
+    class="pluma-dialog"
     @update:visible="!$event && emit('close')"
   >
     <p v-if="dirty && mode !== 'rename'" class="snapshot-warning">Save before taking a snapshot.</p>

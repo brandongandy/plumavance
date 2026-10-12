@@ -1,11 +1,13 @@
+name: pluma
+
 services:
-  scr:
+  pluma:
     build: .
     restart: unless-stopped
     ports:
-      - "${SCR_PORT:-3000}:3000"
+      - "${PLUMA_PORT:-3000}:3000"
     volumes:
-      - scr-data:/data
+      - pluma-data:/data
 
 volumes:
-  scr-data:
+  pluma-data:

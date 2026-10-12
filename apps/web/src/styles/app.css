@@ -5,7 +5,7 @@
 @theme {
   --font-sans: var(--font-ui);
   --font-serif: var(--font-prose);
-  --font-mono: var(--font-mono);
+  --font-mono: var(--font-code);
 }
 
 * {
@@ -571,7 +571,7 @@ button {
 .snapshot-row span {
   margin-top: 2px;
   color: var(--color-muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-code);
   font-size: 10px;
 }
 
@@ -646,6 +646,10 @@ button {
   border-right: 1px solid var(--color-border);
 }
 
+.compile-selection-toggle {
+  margin: 0 8px 6px;
+}
+
 .compile-selection legend,
 .compile-order > strong {
   display: block;
@@ -689,6 +693,7 @@ button {
 
 .compile-options fieldset {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin: 0;
   border: 0;
@@ -698,6 +703,22 @@ button {
 .compile-options legend {
   margin-bottom: 5px;
   color: var(--color-muted);
+}
+
+.paperback-size-field {
+  display: grid;
+  width: min(100%, 320px);
+  gap: 5px;
+  color: var(--color-muted);
+}
+
+.paperback-size-field select {
+  min-height: 32px;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  padding: 4px 8px;
+  background: var(--color-chrome);
+  color: var(--color-text);
 }
 
 .compile-dirty-gate {

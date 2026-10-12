@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+
 import { afterEach, describe, expect, test } from 'vitest'
 
 import { openDatabase } from '../src/db/client.js'
@@ -23,9 +25,92 @@ describe('database migrations', () => {
     }
     const journalMode = database.pragma('journal_mode', { simple: true })
     const foreignKeys = database.pragma('foreign_keys', { simple: true })
-    expect(version.version).toBe(1)
+    expect(version.version).toBe(3)
     expect(journalMode).toBe('wal')
     expect(foreignKeys).toBe(1)
+    database.close()
+  })
+
+  test('migration_populates_and_maintains_document_search', async () => {
+    temporary = await createTemporaryDatabase()
+    const database = openDatabase(temporary.path)
+    database.exec(`
+      CREATE TABLE _migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+      ${readFileSync(new URL('../src/db/migrations/001_initial.sql', import.meta.url), 'utf8')}
+      INSERT INTO _migrations VALUES (1, 'initial', '2026-10-10T00:00:00.000Z');
+      INSERT INTO projects VALUES ('project-1', 'Novel', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z');
+      INSERT INTO binder_items
+        (id, project_id, parent_id, kind, title, position, trashed_at, created_at, updated_at)
+      VALUES
+        ('document-1', 'project-1', NULL, 'document', 'Opening', 0, NULL, '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z');
+      INSERT INTO documents
+        (binder_item_id, content_json, content_text, notes_text, revision, saved_at)
+      VALUES
+        ('document-1', '{"type":"doc","content":[]}', 'old lantern', '', 0, '2026-10-10T00:00:00.000Z');
+    `)
+
+    runMigrations(database)
+
+    const match = (query: string): string[] => database
+      .prepare('SELECT binder_item_id FROM document_search WHERE document_search MATCH ?')
+      .all(`"${query}"`)
+      .map((row) => (row as { binder_item_id: string }).binder_item_id)
+    expect(match('old lantern')).toEqual(['document-1'])
+
+    database.prepare('UPDATE documents SET content_text = ? WHERE binder_item_id = ?').run('new moonlight', 'document-1')
+    database.prepare('UPDATE binder_items SET title = ? WHERE id = ?').run('Renamed Chapter', 'document-1')
+    expect(match('moonlight')).toEqual(['document-1'])
+    expect(match('Renamed')).toEqual(['document-1'])
+    expect(match('lantern')).toEqual([])
+
+    database.prepare('DELETE FROM binder_items WHERE id = ?').run('document-1')
+    expect(database.prepare('SELECT count(*) AS count FROM document_search').get()).toEqual({ count: 0 })
+    database.close()
+  })
+
+  test('migration_backfills_exact_snapshot_word_counts', async () => {
+    temporary = await createTemporaryDatabase()
+    const database = openDatabase(temporary.path)
+    database.exec(`
+      CREATE TABLE _migrations (
+        version INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+      ${readFileSync(new URL('../src/db/migrations/001_initial.sql', import.meta.url), 'utf8')}
+      ${readFileSync(new URL('../src/db/migrations/002_document_search.sql', import.meta.url), 'utf8')}
+      INSERT INTO _migrations VALUES
+        (1, 'initial', '2026-10-10T00:00:00.000Z'),
+        (2, 'document-search', '2026-10-10T00:00:00.000Z');
+      INSERT INTO projects VALUES ('project-1', 'Novel', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z');
+      INSERT INTO binder_items
+        (id, project_id, parent_id, kind, title, position, trashed_at, created_at, updated_at)
+      VALUES
+        ('document-1', 'project-1', NULL, 'document', 'Opening', 0, NULL, '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z');
+      INSERT INTO documents
+        (binder_item_id, content_json, content_text, notes_text, revision, saved_at)
+      VALUES
+        ('document-1', '{"type":"doc","content":[]}', '', '', 0, '2026-10-10T00:00:00.000Z');
+    `)
+    const samples = ['', '   ', 'one\ntwo', 'one\u00a0two\u2003three']
+    const insert = database.prepare(
+      `INSERT INTO snapshots (id, document_id, name, content_json, content_text, created_at)
+       VALUES (?, 'document-1', NULL, '{"type":"doc","content":[]}', ?, '2026-10-10T00:00:00.000Z')`,
+    )
+    samples.forEach((text, index) => insert.run(`snapshot-${index}`, text))
+
+    runMigrations(database)
+
+    const rows = database
+      .prepare('SELECT id, word_count FROM snapshots ORDER BY id')
+      .all() as Array<{ id: string; word_count: number }>
+    expect(rows.map((row) => row.word_count)).toEqual(
+      samples.map((text) => (text.trim() ? text.trim().split(/\s+/u).length : 0)),
+    )
     database.close()
   })
 

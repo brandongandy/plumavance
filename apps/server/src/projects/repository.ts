@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3'
-import type { ProjectDto } from '@scr/shared'
+import type { ProjectDto } from '@pluma/shared'
 
 interface ProjectRow {
   id: string

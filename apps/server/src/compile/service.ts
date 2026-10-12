@@ -1,10 +1,11 @@
-import type { CompileRequest } from '@scr/shared'
+import type { CompileRequest } from '@pluma/shared'
 
 import type { BinderService } from '../binder/service.js'
 import type { DocumentRepository } from '../documents/repository.js'
 import type { CompileArtifact, ConverterSet } from './converters.js'
-import { renderCompileHtml, sanitizeFilename } from './render-html.js'
-import { resolveCompileSelection } from './selection.js'
+import { bundledFont } from './fonts.js'
+import { renderCompileHtml, renderCompileStyles, sanitizeFilename } from './render-html.js'
+import { resolveCompileDocumentIds, resolveCompileSelection } from './selection.js'
 
 export interface CompileService {
   compile(projectId: string, request: CompileRequest, signal?: AbortSignal): Promise<CompileArtifact>
@@ -13,9 +14,19 @@ export interface CompileService {
 export function createCompileService(binder: BinderService, documents: DocumentRepository, converters: ConverterSet): CompileService {
   return {
     async compile(projectId, request, signal) {
-      const selected = resolveCompileSelection(binder.listProject(projectId).items, request.itemIds, (id) => documents.find(id))
+      const items = binder.listProject(projectId).items
+      const documentIds = resolveCompileDocumentIds(items, request.itemIds)
+      const selected = resolveCompileSelection(items, request.itemIds, documents.findMany(documentIds))
       const html = renderCompileHtml(selected, request)
-      return converters.convert({ html, format: request.format, filename: sanitizeFilename(request.filename, request.format) }, signal)
+      const epub = request.exportType === 'ereader' && request.format === 'epub'
+        ? { stylesheet: renderCompileStyles(request, 'linked'), fonts: bundledFont(request.font, 'linked').assets }
+        : undefined
+      return converters.convert({
+        html,
+        format: request.format,
+        filename: sanitizeFilename(request.filename, request.format),
+        ...(epub ? { epub } : {}),
+      }, signal)
     },
   }
 }

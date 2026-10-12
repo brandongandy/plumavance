@@ -1,4 +1,4 @@
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 import PrimeVue from 'primevue/config'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -60,6 +60,7 @@ async function mountTree(canTransition = () => true): Promise<{ wrapper: VueWrap
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -83,6 +84,7 @@ describe('binder tree', () => {
   })
 
   test('supports_inline_rename_and_title_search', async () => {
+    vi.useFakeTimers()
     const { wrapper, store } = await mountTree()
     const search = vi.spyOn(store, 'search').mockImplementation(async () => {
       store.searchResults = [{ id: notesId, title: 'Research Notes', excerpt: '' }]
@@ -100,7 +102,8 @@ describe('binder tree', () => {
     expect(store.renameItem).toHaveBeenCalledWith(chapterId, 'Opening')
 
     await wrapper.get('input[aria-label="Search binder"]').setValue('research')
-    expect(search).toHaveBeenCalledWith('research')
+    await vi.advanceTimersByTimeAsync(250)
+    expect(search).toHaveBeenCalledWith('research', expect.any(AbortSignal))
     expect(wrapper.find(`[data-item-id="${folderId}"]`).exists()).toBe(false)
     expect(wrapper.get(`[data-item-id="${notesId}"]`).text()).toContain('Research Notes')
   })

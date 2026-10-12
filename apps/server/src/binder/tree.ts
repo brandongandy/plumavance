@@ -1,23 +1,48 @@
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 
 export interface BinderRecord extends BinderItemDto {
   trashedParentId: string | null
   trashedPosition: number | null
 }
 
-export function hasTrashedAncestor(item: BinderRecord, records: BinderRecord[]): boolean {
+export function collectTrashedIds(records: BinderRecord[]): Set<string> {
   const byId = new Map(records.map((record) => [record.id, record]))
-  const visited = new Set<string>()
-  let current: BinderRecord | undefined = item
+  const memo = new Map<string, boolean>()
 
-  while (current) {
-    if (current.trashedAt) return true
-    if (!current.parentId || visited.has(current.parentId)) return false
-    visited.add(current.parentId)
-    current = byId.get(current.parentId)
+  for (const record of records) {
+    if (memo.has(record.id)) continue
+
+    const path: BinderRecord[] = []
+    const visited = new Set<string>()
+    let current: BinderRecord | undefined = record
+    let isTrashed = false
+
+    while (current) {
+      const cached = memo.get(current.id)
+      if (cached !== undefined) {
+        isTrashed = cached
+        break
+      }
+      if (current.trashedAt) {
+        isTrashed = true
+        path.push(current)
+        break
+      }
+      if (visited.has(current.id)) break
+
+      visited.add(current.id)
+      path.push(current)
+      current = current.parentId ? byId.get(current.parentId) : undefined
+    }
+
+    for (const item of path) memo.set(item.id, isTrashed)
   }
 
-  return false
+  return new Set(records.filter((record) => memo.get(record.id)).map((record) => record.id))
+}
+
+export function hasTrashedAncestor(item: BinderRecord, records: BinderRecord[]): boolean {
+  return collectTrashedIds(records).has(item.id)
 }
 
 export function isDescendant(
@@ -64,12 +89,12 @@ export function partitionBinder(records: BinderRecord[]): {
   active: BinderRecord[]
   trashed: BinderRecord[]
 } {
-  const activeSet = new Set(records.filter((record) => !hasTrashedAncestor(record, records)).map((item) => item.id))
-  const activeRecords = records.filter((record) => activeSet.has(record.id))
-  const trashedRecords = records.filter((record) => !activeSet.has(record.id))
+  const trashedIds = collectTrashedIds(records)
+  const activeRecords = records.filter((record) => !trashedIds.has(record.id))
+  const trashedRecords = records.filter((record) => trashedIds.has(record.id))
   const activeRoots = activeRecords.filter((record) => !record.parentId)
   const trashedRoots = trashedRecords.filter(
-    (record) => !record.parentId || !trashedRecords.some((candidate) => candidate.id === record.parentId),
+    (record) => !record.parentId || !trashedIds.has(record.parentId),
   )
   return {
     active: flattenBinder(activeRecords, activeRoots),

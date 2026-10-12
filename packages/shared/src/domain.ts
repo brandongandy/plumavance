@@ -81,3 +81,11 @@ export interface SnapshotDto {
   contentText: string
   createdAt: string
 }
+
+export interface SnapshotSummaryDto {
+  id: string
+  documentId: string
+  name: string | null
+  wordCount: number
+  createdAt: string
+}

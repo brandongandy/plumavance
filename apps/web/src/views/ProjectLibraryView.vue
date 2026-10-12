@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ProjectDto } from '@scr/shared'
+import type { ProjectDto } from '@pluma/shared'
 import Button from 'primevue/button'
 import { nextTick, onMounted, shallowRef } from 'vue'
 import { useRouter } from 'vue-router'
@@ -116,7 +116,7 @@ onMounted(loadProjects)
   <div class="min-h-screen bg-[var(--color-app)] text-[var(--color-text)]">
     <header class="flex h-12 items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-chrome)] px-3">
       <div class="flex items-baseline gap-2">
-        <span class="text-sm font-semibold tracking-wide">Scr</span>
+        <span class="text-sm font-semibold tracking-wide">Plumavance</span>
         <span class="font-mono text-[0.6875rem] text-[var(--color-muted)]">Projects</span>
       </div>
       <Button

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 import { nextTick, ref, watch } from 'vue'
 
 const props = defineProps<{

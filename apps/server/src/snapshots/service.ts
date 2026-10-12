@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import type { DocumentDto, SnapshotDto } from '@scr/shared'
+import type { DocumentDto, SnapshotDto, SnapshotSummaryDto } from '@pluma/shared'
 
 import type { DocumentRepository } from '../documents/repository.js'
 import { ApiError } from '../http/errors.js'
@@ -12,10 +12,10 @@ function normalizeName(name: string | undefined): string | null {
 }
 
 export interface SnapshotService {
-  list(documentId: string): SnapshotDto[]
-  create(documentId: string, name?: string): SnapshotDto
+  list(documentId: string): SnapshotSummaryDto[]
+  create(documentId: string, name?: string): SnapshotSummaryDto
   get(snapshotId: string): SnapshotDto
-  rename(snapshotId: string, name: string): SnapshotDto
+  rename(snapshotId: string, name: string): SnapshotSummaryDto
   restore(snapshotId: string, expectedRevision: number): DocumentDto
   delete(snapshotId: string): void
 }
@@ -65,7 +65,7 @@ export function createSnapshotService(
     get: getSnapshot,
     rename(snapshotId, name) {
       getSnapshot(snapshotId)
-      return snapshots.rename(snapshotId, normalizeName(name)) as SnapshotDto
+      return snapshots.rename(snapshotId, normalizeName(name)) as SnapshotSummaryDto
     },
     restore(snapshotId, expectedRevision) {
       return snapshots.transaction(() => {

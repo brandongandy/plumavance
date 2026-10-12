@@ -1,4 +1,4 @@
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 import PrimeVue from 'primevue/config'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -12,12 +12,28 @@ const projectId = '11111111-1111-4111-8111-111111111111'
 const folderId = '22222222-2222-4222-8222-222222222222'
 const firstId = '33333333-3333-4333-8333-333333333333'
 const secondId = '44444444-4444-4444-8444-444444444444'
+const nestedFolderId = '55555555-5555-4555-8555-555555555555'
 const stamp = '2026-10-10T00:00:00.000Z'
 const item = (id: string, title: string, kind: 'folder' | 'document', parentId: string | null, position: number): BinderItemDto => ({ id, projectId, title, kind, parentId, position, trashedAt: null, createdAt: stamp, updatedAt: stamp })
 
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = '' })
 
 describe('compile dialog', () => {
+  test('defaults_scene_and_chapter_break_controls', async () => {
+    const pinia = createPinia(); setActivePinia(pinia)
+    useWorkspaceStore().$patch({ projectId, items: [item(firstId, 'Opening', 'document', folderId, 0)] })
+    mount(CompileDialog, { attachTo: document.body, props: { visible: true, dirty: false }, global: { plugins: [pinia, [PrimeVue, { unstyled: true }]] } })
+    await flushPromises()
+
+    const sceneSeparator = document.querySelector<HTMLInputElement>('input[aria-label="Scene separator"]')
+    const chapterPageBreaks = document.querySelector<HTMLInputElement>('input[aria-label="Chapter page breaks"]')
+
+    expect(sceneSeparator?.value).toBe('#')
+    expect(sceneSeparator?.maxLength).toBe(20)
+    expect(chapterPageBreaks?.checked).toBe(true)
+    expect(document.querySelector('[aria-label="Compile order"]')?.textContent).toContain('Select a chapter or scene.')
+  })
+
   test('selects_folders_previews_binder_order_and_submits_valid_options', async () => {
     const pinia = createPinia(); setActivePinia(pinia)
     const store = useWorkspaceStore()
@@ -33,8 +49,71 @@ describe('compile dialog', () => {
     const filename = document.querySelector<HTMLInputElement>('input[aria-label="Export filename"]') as HTMLInputElement
     filename.value = 'Novel Draft'; filename.dispatchEvent(new Event('input', { bubbles: true }))
     ;(document.querySelector<HTMLInputElement>('input[value="markdown"]') as HTMLInputElement).click()
+    const folderTitles = [...document.querySelectorAll('label')].find((label) => label.textContent?.includes('Include chapter titles'))?.querySelector('input') as HTMLInputElement
+    const documentTitles = [...document.querySelectorAll('label')].find((label) => label.textContent?.includes('Include scene titles'))?.querySelector('input') as HTMLInputElement
+    const sceneSeparator = document.querySelector<HTMLInputElement>('input[aria-label="Scene separator"]') as HTMLInputElement
+    const chapterPageBreaks = document.querySelector<HTMLInputElement>('input[aria-label="Chapter page breaks"]') as HTMLInputElement
+    expect(folderTitles.checked).toBe(true)
+    folderTitles.click()
+    expect(documentTitles.checked).toBe(true)
+    sceneSeparator.value = '* * *'; sceneSeparator.dispatchEvent(new Event('input', { bubbles: true }))
+    chapterPageBreaks.click()
     submit.click(); await flushPromises()
-    expect(wrapper.emitted('compile')?.[0]?.[0]).toMatchObject({ itemIds: [folderId], format: 'markdown', filename: 'Novel Draft' })
+    expect(wrapper.emitted('compile')?.[0]?.[0]).toMatchObject({
+      itemIds: [folderId, firstId],
+      format: 'markdown',
+      filename: 'Novel Draft',
+      includeFolderTitles: false,
+      sceneSeparator: '* * *',
+      chapterPageBreaks: false,
+    })
+  })
+
+  test('selects_all_items_and_cascades_folder_selection_in_both_directions', async () => {
+    const pinia = createPinia(); setActivePinia(pinia)
+    useWorkspaceStore().$patch({
+      projectId,
+      items: [
+        item(folderId, 'Part One', 'folder', null, 0),
+        item(nestedFolderId, 'Act One', 'folder', folderId, 0),
+        item(firstId, 'Opening', 'document', nestedFolderId, 0),
+        item(secondId, 'Ending', 'document', null, 1),
+      ],
+    })
+    mount(CompileDialog, { attachTo: document.body, props: { visible: true, dirty: false }, global: { plugins: [pinia, [PrimeVue, { unstyled: true }]] } })
+    await flushPromises()
+
+    const selectAll = document.querySelector<HTMLButtonElement>('button[aria-label="Select all compile items"]')
+    expect(selectAll).toBeTruthy()
+    selectAll?.click()
+    await flushPromises()
+    expect([...document.querySelectorAll<HTMLInputElement>('.compile-selection input[type="checkbox"]')].every((input) => input.checked)).toBe(true)
+
+    ;(document.querySelector<HTMLInputElement>(`input[value="${nestedFolderId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector<HTMLInputElement>(`input[value="${folderId}"]`)?.checked).toBe(false)
+    expect(document.querySelector<HTMLInputElement>(`input[value="${nestedFolderId}"]`)?.checked).toBe(false)
+    expect(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`)?.checked).toBe(false)
+    expect(document.querySelector<HTMLInputElement>(`input[value="${secondId}"]`)?.checked).toBe(true)
+
+    ;(document.querySelector<HTMLInputElement>(`input[value="${folderId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector<HTMLInputElement>(`input[value="${nestedFolderId}"]`)?.checked).toBe(true)
+    expect(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`)?.checked).toBe(true)
+
+    document.querySelector<HTMLButtonElement>('button[aria-label="Select all compile items"]')?.click()
+    await flushPromises()
+    const clearAll = document.querySelector<HTMLButtonElement>('button[aria-label="Clear compile selection"]')
+    expect(clearAll).toBeTruthy()
+    clearAll?.click()
+    await flushPromises()
+    expect([...document.querySelectorAll<HTMLInputElement>('.compile-selection input[type="checkbox"]')].every((input) => !input.checked)).toBe(true)
+
+    ;(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`)?.checked).toBe(true)
+    expect(document.querySelector<HTMLInputElement>(`input[value="${nestedFolderId}"]`)?.checked).toBe(false)
+    expect(document.querySelector<HTMLInputElement>(`input[value="${folderId}"]`)?.checked).toBe(false)
   })
 
   test('gates_dirty_content_with_save_saved_copy_or_cancel_and_reports_errors', async () => {
@@ -48,16 +127,90 @@ describe('compile dialog', () => {
   })
 
   test('downloads_the_response_filename_and_revokes_the_object_url', async () => {
-    const createObjectURL = vi.fn(() => 'blob:scr')
+    const createObjectURL = vi.fn(() => 'blob:pluma')
     const revokeObjectURL = vi.fn()
     Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createObjectURL })
     Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revokeObjectURL })
     vi.stubGlobal('fetch', vi.fn(async () => new Response('draft', { headers: { 'content-disposition': 'attachment; filename="Draft.md"' } })))
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined)
     const compile = useCompile()
-    await compile.compile(projectId, { itemIds: [firstId], format: 'markdown', includeTitles: true, separateDocuments: true, filename: 'Draft' })
+    await compile.compile(projectId, { itemIds: [firstId], exportType: 'manuscript', format: 'markdown', includeTitles: true, includeFolderTitles: true, sceneSeparator: '#', chapterPageBreaks: true, filename: 'Draft' })
     expect(click).toHaveBeenCalled()
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:scr')
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:pluma')
     expect(compile.error.value).toBe('')
+  })
+
+  test('offers_export_specific_formats_and_ereader_fonts', async () => {
+    const pinia = createPinia(); setActivePinia(pinia)
+    useWorkspaceStore().$patch({ projectId, items: [item(firstId, 'Opening', 'document', null, 0)] })
+    const wrapper = mount(CompileDialog, { attachTo: document.body, props: { visible: true, dirty: false }, global: { plugins: [pinia, [PrimeVue, { unstyled: true }]] } })
+    await flushPromises()
+
+    expect(document.querySelector<HTMLInputElement>('input[value="manuscript"]')?.checked).toBe(true)
+    expect(document.querySelector('input[value="epub"]')).toBeNull()
+    expect(document.querySelector('fieldset[aria-label="E-reader font"]')).toBeNull()
+
+    ;(document.querySelector<HTMLInputElement>('input[value="ereader"]') as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector('input[value="epub"]')).toBeTruthy()
+    expect(document.querySelector('input[value="rtf"]')).toBeNull()
+    expect(document.querySelector('fieldset[aria-label="E-reader font"]')).toBeTruthy()
+    expect(document.querySelector('fieldset[aria-label="E-reader font"]')?.textContent).toContain('Literata')
+    expect(document.querySelector('fieldset[aria-label="E-reader font"]')?.textContent).toContain('IBM Plex Sans')
+    expect(document.querySelector('fieldset[aria-label="E-reader font"]')?.textContent).toContain('IBM Plex Mono')
+
+    ;(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`) as HTMLInputElement).click()
+    ;(document.querySelector<HTMLInputElement>('input[value="epub"]') as HTMLInputElement).click()
+    ;(document.querySelector<HTMLInputElement>('input[value="sans-serif"]') as HTMLInputElement).click()
+    await flushPromises()
+    ;(document.querySelector<HTMLButtonElement>('button[aria-label="Compile download"]') as HTMLButtonElement).click()
+    await flushPromises()
+
+    expect(wrapper.emitted('compile')?.[0]?.[0]).toMatchObject({ exportType: 'ereader', format: 'epub', font: 'sans-serif' })
+  })
+
+  test('selects_a_paperback_size_for_ereader_pdfs', async () => {
+    const pinia = createPinia(); setActivePinia(pinia)
+    useWorkspaceStore().$patch({ projectId, items: [item(firstId, 'Opening', 'document', null, 0)] })
+    const wrapper = mount(CompileDialog, { attachTo: document.body, props: { visible: true, dirty: false }, global: { plugins: [pinia, [PrimeVue, { unstyled: true }]] } })
+    await flushPromises()
+
+    expect(document.querySelector('[aria-label="Paperback size"]')).toBeNull()
+    ;(document.querySelector<HTMLInputElement>('input[value="ereader"]') as HTMLInputElement).click()
+    await flushPromises()
+
+    const pageSize = document.querySelector<HTMLSelectElement>('[aria-label="Paperback size"]') as HTMLSelectElement
+    expect(pageSize.value).toBe('digest')
+    expect([...pageSize.options].map((option) => option.text)).toEqual([
+      'Mass-market paperback — 4.25″ × 6.87″',
+      'Digest — 5.06″ × 7.81″',
+      'Trade — 6″ × 9″',
+    ])
+    pageSize.value = 'trade'
+    pageSize.dispatchEvent(new Event('change', { bubbles: true }))
+
+    ;(document.querySelector<HTMLInputElement>('input[value="epub"]') as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Paperback size"]')).toBeNull()
+    ;(document.querySelector<HTMLInputElement>('input[value="pdf"]') as HTMLInputElement).click()
+    ;(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    ;(document.querySelector<HTMLButtonElement>('button[aria-label="Compile download"]') as HTMLButtonElement).click()
+    await flushPromises()
+
+    expect(wrapper.emitted('compile')?.[0]?.[0]).toMatchObject({ exportType: 'ereader', format: 'pdf', pageSize: 'trade' })
+  })
+
+  test('resets_an_incompatible_format_when_export_type_changes', async () => {
+    const pinia = createPinia(); setActivePinia(pinia)
+    useWorkspaceStore().$patch({ projectId, items: [item(firstId, 'Opening', 'document', null, 0)] })
+    mount(CompileDialog, { attachTo: document.body, props: { visible: true, dirty: false }, global: { plugins: [pinia, [PrimeVue, { unstyled: true }]] } })
+    await flushPromises()
+
+    ;(document.querySelector<HTMLInputElement>('input[value="markdown"]') as HTMLInputElement).click()
+    ;(document.querySelector<HTMLInputElement>('input[value="ereader"]') as HTMLInputElement).click()
+    await flushPromises()
+
+    expect(document.querySelector<HTMLInputElement>('input[value="pdf"]')?.checked).toBe(true)
   })
 })

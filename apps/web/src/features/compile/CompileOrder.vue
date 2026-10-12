@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BinderItemDto } from '@scr/shared'
+import type { BinderItemDto } from '@pluma/shared'
 
 defineProps<{ documents: BinderItemDto[] }>()
 </script>
@@ -10,6 +10,6 @@ defineProps<{ documents: BinderItemDto[] }>()
     <ol>
       <li v-for="document in documents" :key="document.id">{{ document.title }}</li>
     </ol>
-    <p v-if="documents.length === 0">Select a folder or document.</p>
+    <p v-if="documents.length === 0">Select a chapter or scene.</p>
   </div>
 </template>
