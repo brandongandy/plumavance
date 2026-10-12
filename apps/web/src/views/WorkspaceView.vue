@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { CompileRequest } from '@pluma/shared'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { onBeforeRouteUpdate, useRoute } from 'vue-router'
 
 import AppToolbar from '../components/layout/AppToolbar.vue'
 import MobilePanelSwitcher from '../components/layout/MobilePanelSwitcher.vue'
@@ -29,6 +29,7 @@ const store = useWorkspaceStore()
 const documentStore = useDocumentStore()
 const writingProgress = useWritingProgressStore()
 const unsavedGuard = useUnsavedGuard(() => documentStore.isDirty)
+onBeforeRouteUpdate((to, from) => to.params.projectId === from.params.projectId || unsavedGuard.canTransition())
 const compileTask = useCompile()
 const compileVisible = ref(false)
 const compileTrigger = ref<HTMLElement | null>(null)

@@ -1,7 +1,7 @@
 import axeCore from 'axe-core'
 import PrimeVue from 'primevue/config'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -13,12 +13,14 @@ import { useWritingProgressStore } from '../src/stores/writing-progress.js'
 import { useWorkspaceStore } from '../src/stores/workspace.js'
 
 const projectId = '11111111-1111-4111-8111-111111111111'
+const nextProjectId = '44444444-4444-4444-8444-444444444444'
+const nextDocumentId = '66666666-6666-4666-8666-666666666666'
 
-function projectResponse(): Response {
+function projectResponse(id = projectId): Response {
   return Response.json({
     project: {
-      id: projectId,
-      name: 'The Long Draft',
+      id,
+      name: id === projectId ? 'The Long Draft' : 'The Next Draft',
       createdAt: '2026-10-10T00:00:00.000Z',
       updatedAt: '2026-10-10T00:00:00.000Z',
       lastOpenedAt: '2026-10-10T00:00:00.000Z',
@@ -29,7 +31,7 @@ function projectResponse(): Response {
     items: [
       {
         id: '22222222-2222-4222-8222-222222222222',
-        projectId,
+        projectId: id,
         parentId: null,
         kind: 'folder',
         title: 'Manuscript',
@@ -39,11 +41,11 @@ function projectResponse(): Response {
         updatedAt: '2026-10-10T00:00:00.000Z',
       },
       {
-        id: '33333333-3333-4333-8333-333333333333',
-        projectId,
+        id: id === projectId ? '33333333-3333-4333-8333-333333333333' : nextDocumentId,
+        projectId: id,
         parentId: '22222222-2222-4222-8222-222222222222',
         kind: 'document',
-        title: 'Chapter One',
+        title: id === projectId ? 'Chapter One' : 'Chapter Two',
         position: 0,
         trashedAt: null,
         createdAt: '2026-10-10T00:00:00.000Z',
@@ -88,16 +90,18 @@ function workspaceResponse(url: URL): Response {
   })
   if (url.pathname.endsWith('/snapshots')) return Response.json([])
   if (url.pathname.startsWith('/api/documents/')) return Response.json({
-    id: '33333333-3333-4333-8333-333333333333', projectId, title: 'Chapter One', notesText: '', revision: 0,
+    id: url.pathname.split('/')[3], projectId: url.pathname.includes(nextDocumentId) ? nextProjectId : projectId,
+    title: url.pathname.includes(nextDocumentId) ? 'Chapter Two' : 'Chapter One', notesText: '', revision: 0,
     savedAt: '2026-10-10T00:00:00.000Z', contentText: 'Saved prose',
     contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Saved prose' }] }] },
   })
-  return projectResponse()
+  return projectResponse(url.pathname.split('/')[3])
 }
 
 afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   localStorage.clear()
 })
 
@@ -219,6 +223,38 @@ describe('workspace layout', () => {
     expect(useWritingProgressStore().dailyWordCount).toBe(before)
   })
 
+  test.each([false, true])('guards a dirty document when a project route parameter changes (discard: %s)', async (discard) => {
+    // Catches same-component route navigation silently replacing unsaved prose/title state.
+    const requests: string[] = []
+    const wrapper = await mountWorkspace(1280, (url) => {
+      requests.push(url.pathname)
+      return workspaceResponse(url)
+    })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(discard)
+    await wrapper.get('[aria-label="Document title"]').setValue('Unsaved chapter title')
+    await wrapper.get('[role="switch"][aria-label="Edit Mode"]').trigger('click')
+    const router = wrapper.getComponent(WorkspaceView).vm.$router
+    await router.push(`/projects/${nextProjectId}`)
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledTimes(1)
+    if (discard) {
+      expect(router.currentRoute.value.params.projectId).toBe(nextProjectId)
+      expect(useWorkspaceStore().project?.id).toBe(nextProjectId)
+      expect(useWritingProgressStore().projectId).toBe(nextProjectId)
+      expect(wrapper.get('[aria-label="Document title"]').element).toHaveProperty('value', 'Chapter Two')
+      expect(useDocumentStore().isDirty).toBe(false)
+      expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('false')
+    } else {
+      expect(router.currentRoute.value.params.projectId).toBe(projectId)
+      expect(useWorkspaceStore().project?.id).toBe(projectId)
+      expect(useWritingProgressStore().projectId).toBe(projectId)
+      expect(wrapper.get('[aria-label="Document title"]').element).toHaveProperty('value', 'Unsaved chapter title')
+      expect(useDocumentStore().isDirty).toBe(true)
+      expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
+      expect(requests.some((request) => request.includes(nextProjectId))).toBe(false)
+    }
+  })
+
   test('refreshes the saved project aggregate after create, trash, restore, and permanent delete', async () => {
     // Catches binder membership mutations leaving the saved project count stale.
     let aggregate = 100
@@ -258,5 +294,72 @@ describe('workspace layout', () => {
       rules: { 'color-contrast': { enabled: false }, 'color-contrast-enhanced': { enabled: false } },
     })
     expect(results.violations).toEqual([])
+  })
+})
+
+describe('workspace project loading order', () => {
+  function deferredResponse(): { promise: Promise<Response>; resolve: (response: Response) => void; reject: (error: Error) => void } {
+    let resolve!: (response: Response) => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<Response>((fulfill, fail) => { resolve = fulfill; reject = fail })
+    return { promise, resolve, reject }
+  }
+
+  function installDeferredProjects(older: Promise<Response>, newer: Promise<Response>): void {
+    setActivePinia(createPinia())
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === `/api/projects/${projectId}`) return older
+      if (url.pathname === `/api/projects/${nextProjectId}`) return newer
+      return workspaceResponse(url)
+    }))
+  }
+
+  afterEach(() => { useWritingProgressStore().dispose() })
+
+  test('retains the newer project and selection when an older project responds later', async () => {
+    // Catches an old response overriding current binder contents, selection, and project identity.
+    const older = deferredResponse()
+    const newer = deferredResponse()
+    installDeferredProjects(older.promise, newer.promise)
+    const workspace = useWorkspaceStore()
+    const oldLoad = workspace.load(projectId)
+    const newLoad = workspace.load(nextProjectId)
+    newer.resolve(projectResponse(nextProjectId))
+    await newLoad
+    workspace.activePanel = 'binder'
+    workspace.activeItemId = '22222222-2222-4222-8222-222222222222'
+    older.resolve(projectResponse())
+    await oldLoad
+    expect(workspace.projectId).toBe(nextProjectId)
+    expect(workspace.project?.id).toBe(nextProjectId)
+    expect(workspace.items.every((item) => item.projectId === nextProjectId)).toBe(true)
+    expect(workspace.activeItemId).toBe('22222222-2222-4222-8222-222222222222')
+    expect(workspace.activePanel).toBe('binder')
+    expect(workspace.loading).toBe(false)
+    expect(workspace.errorMessage).toBe('')
+  })
+
+  test.each(['success', 'failure'])('ignores older %s while the current project is still loading', async (outcome) => {
+    // Catches stale finally/catch handlers ending the latest loading state or surfacing the wrong error.
+    const older = deferredResponse()
+    const newer = deferredResponse()
+    installDeferredProjects(older.promise, newer.promise)
+    const workspace = useWorkspaceStore()
+    const oldLoad = workspace.load(projectId)
+    const newLoad = workspace.load(nextProjectId)
+    if (outcome === 'success') older.resolve(projectResponse())
+    else older.reject(new Error('Older project failed'))
+    await oldLoad
+    expect(workspace.projectId).toBe(nextProjectId)
+    expect(workspace.project).toBeNull()
+    expect(workspace.items).toEqual([])
+    expect(workspace.activeItemId).toBeNull()
+    expect(workspace.loading).toBe(true)
+    expect(workspace.errorMessage).toBe('')
+    newer.reject(new Error('Current project failed'))
+    await newLoad
+    expect(workspace.loading).toBe(false)
+    expect(workspace.errorMessage).toBe('Current project failed')
   })
 })

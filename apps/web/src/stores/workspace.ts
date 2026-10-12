@@ -59,6 +59,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const loading = ref(false)
   const errorMessage = ref('')
   let searchSequence = 0
+  let loadSequence = 0
 
   const activeItem = computed(() => items.value.find((item) => item.id === activeItemId.value) ?? null)
 
@@ -79,20 +80,23 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   )
 
   async function load(id: string): Promise<void> {
+    const sequence = ++loadSequence
     projectId.value = id
+    const isCurrent = (): boolean => sequence === loadSequence && projectId.value === id
     loading.value = true
     errorMessage.value = ''
     try {
       const [detail] = await Promise.all([binderApi.getProject(id), useWritingProgressStore().load(id)])
+      if (!isCurrent()) return
       project.value = detail.project
       items.value = detail.items
       trashedItems.value = detail.trashedItems
       activeItemId.value = detail.items.find((item) => item.kind === 'document')?.id ?? detail.items[0]?.id ?? null
       activePanel.value = 'editor'
     } catch (error) {
-      errorMessage.value = errorText(error, 'The project could not be opened.')
+      if (isCurrent()) errorMessage.value = errorText(error, 'The project could not be opened.')
     } finally {
-      loading.value = false
+      if (isCurrent()) loading.value = false
     }
   }
 
