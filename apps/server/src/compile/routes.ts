@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs'
 
-import { CompileRequestSchema } from '@pluma/shared'
+import { CompileRequestSchema, CompileWordCountRequestSchema } from '@pluma/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 
@@ -23,6 +23,12 @@ export function contentDisposition(filename: string): string {
 }
 
 export function registerCompileRoutes(app: FastifyInstance, compile: CompileService): void {
+  app.post('/api/projects/:projectId/compile/word-count', async (request) => {
+    const { projectId } = ParamsSchema.parse(request.params)
+    const { itemIds } = CompileWordCountRequestSchema.parse(request.body)
+    return { wordCount: compile.countWords(projectId, itemIds) }
+  })
+
   app.post('/api/projects/:projectId/compile', async (request, reply) => {
     const { projectId } = ParamsSchema.parse(request.params)
     const input = CompileRequestSchema.parse(request.body)

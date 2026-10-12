@@ -104,6 +104,112 @@ describe('compile route', () => {
     expect(find).not.toHaveBeenCalled()
   })
 
+  test('counts_nested_saved_bodies_once_without_titles_notes_or_conversion', () => {
+    const stamp = '2026-10-10T00:00:00.000Z'
+    const folderId = '11111111-1111-4111-8111-111111111111'
+    const nestedId = '44444444-4444-4444-8444-444444444444'
+    const firstId = '22222222-2222-4222-8222-222222222222'
+    const secondId = '33333333-3333-4333-8333-333333333333'
+    const items = [
+      { id: folderId, projectId: 'project', parentId: null, kind: 'folder' as const, title: 'Part One', position: 0, trashedAt: null, createdAt: stamp, updatedAt: stamp },
+      { id: firstId, projectId: 'project', parentId: folderId, kind: 'document' as const, title: 'Chapter One', position: 0, trashedAt: null, createdAt: stamp, updatedAt: stamp },
+      { id: nestedId, projectId: 'project', parentId: folderId, kind: 'folder' as const, title: 'Nested Part', position: 1, trashedAt: null, createdAt: stamp, updatedAt: stamp },
+      { id: secondId, projectId: 'project', parentId: nestedId, kind: 'document' as const, title: 'Chapter Two', position: 0, trashedAt: null, createdAt: stamp, updatedAt: stamp },
+    ]
+    const documentsById = new Map(items.filter((item) => item.kind === 'document').map((item) => [item.id, {
+      id: item.id,
+      projectId: 'project',
+      title: item.title,
+      contentJson: { type: 'doc' as const, content: [{ type: 'paragraph' as const }] },
+      contentText: item.id === firstId ? '  First\u00a0scene  ' : '\nSecond\tlonger scene\n',
+      notesText: 'Notes also contain words',
+      revision: 0,
+      savedAt: stamp,
+    }]))
+    const findMany = vi.fn(() => documentsById)
+    const find = vi.fn()
+    const binder = { listProject: () => ({ items, trashedItems: [] }) } as unknown as BinderService
+    const documents = { findMany, find } as unknown as DocumentRepository
+    const converters: ConverterSet = { convert: vi.fn() }
+    const service = createCompileService(binder, documents, converters)
+
+    expect(service.countWords('project', [folderId, nestedId, firstId])).toBe(5)
+    expect(findMany).toHaveBeenCalledExactlyOnceWith([firstId, secondId])
+    expect(find).not.toHaveBeenCalled()
+    expect(converters.convert).not.toHaveBeenCalled()
+  })
+
+  test('count_service_preserves_empty_selection_errors', () => {
+    const binder = { listProject: () => ({ items: [], trashedItems: [] }) } as unknown as BinderService
+    const documents = { findMany: vi.fn() } as unknown as DocumentRepository
+    const service = createCompileService(binder, documents, { convert: vi.fn() })
+
+    expect(() => service.countWords('project', [])).toThrow('Select at least one document.')
+  })
+
+  test('count_route_expands_nested_folders_and_counts_saved_body_text_only', async () => {
+    const converters: ConverterSet = { convert: vi.fn() }
+    const app = await createApp({ databasePath: temporary.path, converters })
+    const project = await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Novel' } })
+    const projectId = project.json<{ id: string }>().id
+    const folder = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/items`, payload: { kind: 'folder', parentId: null, title: 'Part One' } })
+    const folderId = folder.json<{ id: string }>().id
+    const nested = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/items`, payload: { kind: 'folder', parentId: folderId, title: 'Nested Part' } })
+    const nestedId = nested.json<{ id: string }>().id
+    const ids: string[] = []
+    for (const [parentId, text] of [[folderId, 'First scene'], [nestedId, 'Second longer scene']]) {
+      const item = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/items`, payload: { kind: 'document', parentId, title: 'Chapter title words' } })
+      const id = item.json<{ id: string }>().id
+      ids.push(id)
+      const saved = await app.inject({ method: 'PUT', url: `/api/documents/${id}`, payload: {
+        title: 'Chapter title words',
+        contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] },
+        notesText: 'Notes also contain words',
+        expectedRevision: 0,
+      } })
+      expect(saved.statusCode).toBe(200)
+    }
+
+    for (const [itemIds, wordCount] of [[[folderId], 5], [[nestedId], 3], [ids, 5], [[folderId, ids[0]], 5]] as const) {
+      const response = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/compile/word-count`, payload: { itemIds } })
+
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toEqual({ wordCount })
+    }
+    expect(converters.convert).not.toHaveBeenCalled()
+    await app.close()
+  })
+
+  test('count_route_rejects_empty_foreign_invalid_and_export_setting_selections', async () => {
+    const converters: ConverterSet = { convert: vi.fn() }
+    const app = await createApp({ databasePath: temporary.path, converters })
+    const project = await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Novel' } })
+    const projectId = project.json<{ id: string }>().id
+    const folder = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/items`, payload: { kind: 'folder', parentId: null, title: 'Empty Part' } })
+    const folderId = folder.json<{ id: string }>().id
+    const otherProject = await app.inject({ method: 'POST', url: '/api/projects', payload: { name: 'Other Novel' } })
+    const foreign = await app.inject({ method: 'POST', url: `/api/projects/${otherProject.json<{ id: string }>().id}/items`, payload: { kind: 'document', parentId: null, title: 'Foreign Chapter' } })
+    const cases = [
+      { payload: { itemIds: [] }, code: 'VALIDATION_ERROR' },
+      { payload: { itemIds: [folderId] }, code: 'EMPTY_COMPILE_SELECTION' },
+      { payload: { itemIds: [foreign.json<{ id: string }>().id] }, code: 'INVALID_COMPILE_SELECTION' },
+      { payload: { itemIds: ['22222222-2222-4222-8222-222222222222'] }, code: 'INVALID_COMPILE_SELECTION' },
+      { payload: { itemIds: ['invalid'] }, code: 'VALIDATION_ERROR' },
+      { payload: { itemIds: [folderId], sceneSeparator: 'Words in separator' }, code: 'VALIDATION_ERROR' },
+    ]
+    for (const { payload, code } of cases) {
+      const response = await app.inject({ method: 'POST', url: `/api/projects/${projectId}/compile/word-count`, payload })
+
+      expect(response.statusCode).toBe(400)
+      expect(response.json()).toMatchObject({ code })
+    }
+    const missing = await app.inject({ method: 'POST', url: '/api/projects/22222222-2222-4222-8222-222222222222/compile/word-count', payload: { itemIds: [folderId] } })
+    expect(missing.statusCode).toBe(404)
+    expect(missing.json()).toMatchObject({ code: 'PROJECT_NOT_FOUND' })
+    expect(converters.convert).not.toHaveBeenCalled()
+    await app.close()
+  })
+
   test('downloads_and_disposes_the_artifact_once', async () => {
     const output = join(temporary.directory, 'output.md')
     await writeFile(output, '# Draft')
