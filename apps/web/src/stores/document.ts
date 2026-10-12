@@ -70,6 +70,9 @@ export const useDocumentStore = defineStore('document', () => {
   })
   const contentText = computed(() => editorText(contentJson.value))
   const counts = computed(() => countText(contentText.value))
+  const savedWordCount = computed(() =>
+    savedBuffer.value ? countText(editorText(savedBuffer.value.contentJson)).words : 0,
+  )
   const saveState = computed<SaveState>(() => {
     if (operation.value !== 'idle') return operation.value
     return isDirty.value ? 'unsaved' : 'saved'
@@ -313,6 +316,7 @@ export const useDocumentStore = defineStore('document', () => {
     revision,
     savedAt,
     counts,
+    savedWordCount,
     isDirty,
     saveState,
     conflict,

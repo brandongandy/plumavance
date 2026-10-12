@@ -4,12 +4,14 @@ import { EditorContent, useEditor } from '@tiptap/vue-3'
 import { onBeforeUnmount, ref, watch } from 'vue'
 
 import { useTypewriterScroll } from '../focus/useTypewriterScroll.js'
+import { countText, editorText } from './counts.js'
 import { documentExtensions } from './documentExtensions.js'
 import EditorToolbar from './EditorToolbar.vue'
 
 const props = defineProps<{ modelValue: EditorDocument; readonly?: boolean; focusMode?: boolean }>()
 const emit = defineEmits<{
   'update:modelValue': [value: EditorDocument]
+  'word-count-delta': [signedDelta: number]
   save: []
 }>()
 
@@ -24,7 +26,11 @@ const editor = useEditor({
       class: 'document-prose',
     },
   },
-  onUpdate: ({ editor: currentEditor }) => {
+  onUpdate: ({ editor: currentEditor, transaction }) => {
+    const before = countText(editorText(transaction.before.toJSON() as EditorDocument)).words
+    const after = countText(editorText(transaction.doc.toJSON() as EditorDocument)).words
+    const delta = after - before
+    if (delta !== 0) emit('word-count-delta', delta)
     emit('update:modelValue', currentEditor.getJSON() as EditorDocument)
   },
 })
