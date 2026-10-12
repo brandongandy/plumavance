@@ -22,6 +22,9 @@ import { createProjectService } from './projects/service.js'
 import { createSnapshotRepository } from './snapshots/repository.js'
 import { registerSnapshotRoutes } from './snapshots/routes.js'
 import { createSnapshotService } from './snapshots/service.js'
+import { createWordCountRepository } from './word-count/repository.js'
+import { registerWordCountRoutes } from './word-count/routes.js'
+import { createWordCountService } from './word-count/service.js'
 
 export interface CreateAppOptions {
   databasePath: string
@@ -39,6 +42,8 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   const projectRepository = createProjectRepository(database)
   const binderRepository = createBinderRepository(database)
   const projectService = createProjectService(projectRepository, clock)
+  const wordCountRepository = createWordCountRepository(database)
+  const wordCountService = createWordCountService(wordCountRepository, projectRepository, clock)
   const binderService = createBinderService(binderRepository, projectRepository, clock)
   const documentRepository = createDocumentRepository(database)
   const documentService = createDocumentService(
@@ -79,6 +84,7 @@ export async function createApp(options: CreateAppOptions): Promise<FastifyInsta
   registerDocumentRoutes(app, documentService)
   registerSnapshotRoutes(app, snapshotService)
   registerCompileRoutes(app, compileService)
+  registerWordCountRoutes(app, wordCountService)
 
   if (options.staticRoot) {
     await app.register(fastifyStatic, { root: options.staticRoot, wildcard: false })
