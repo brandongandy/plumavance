@@ -1,4 +1,5 @@
 export type BinderItemKind = 'folder' | 'document'
+export type DailyCountMode = 'additions' | 'net'
 
 export interface ProjectDto {
   id: string
@@ -6,6 +7,23 @@ export interface ProjectDto {
   createdAt: string
   updatedAt: string
   lastOpenedAt: string
+  projectWordTarget: number | null
+  dailyWordTarget: number | null
+  dailyCountMode: DailyCountMode
+}
+
+export interface WritingProgressDto {
+  projectWordTarget: number | null
+  dailyWordTarget: number | null
+  dailyCountMode: DailyCountMode
+  projectWordCount: number
+  localDate: string
+  dailyWordCount: number
+}
+
+export interface WordCountEventResultDto {
+  localDate: string
+  dailyWordCount: number
 }
 
 export interface BinderItemDto {

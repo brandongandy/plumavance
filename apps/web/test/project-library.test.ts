@@ -1,3 +1,4 @@
+import type { ProjectDto } from '@pluma/shared'
 import axeCore from 'axe-core'
 import PrimeVue from 'primevue/config'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
@@ -6,13 +7,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import ProjectLibraryView from '../src/views/ProjectLibraryView.vue'
 
-interface ProjectFixture {
-  id: string
-  name: string
-  createdAt: string
-  updatedAt: string
-  lastOpenedAt: string
-}
+type ProjectFixture = ProjectDto
 
 const first: ProjectFixture = {
   id: '11111111-1111-4111-8111-111111111111',
@@ -20,6 +15,9 @@ const first: ProjectFixture = {
   createdAt: '2026-10-10T00:00:00.000Z',
   updatedAt: '2026-10-10T00:00:02.000Z',
   lastOpenedAt: '2026-10-10T00:00:02.000Z',
+  projectWordTarget: null,
+  dailyWordTarget: null,
+  dailyCountMode: 'additions',
 }
 const second: ProjectFixture = {
   id: '22222222-2222-4222-8222-222222222222',
@@ -27,6 +25,9 @@ const second: ProjectFixture = {
   createdAt: '2026-10-09T00:00:00.000Z',
   updatedAt: '2026-10-09T00:00:00.000Z',
   lastOpenedAt: '2026-10-09T00:00:00.000Z',
+  projectWordTarget: null,
+  dailyWordTarget: null,
+  dailyCountMode: 'additions',
 }
 
 function jsonResponse(body: unknown, status = 200): Response {

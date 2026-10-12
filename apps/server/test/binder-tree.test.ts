@@ -66,7 +66,7 @@ describe('binder tree performance and batch ordering', () => {
     temporary = await createTemporaryDatabase()
     const database = openDatabase(temporary.path)
     runMigrations(database)
-    database.prepare('INSERT INTO projects VALUES (?, ?, ?, ?, ?)').run(projectId, 'Novel', stamp, stamp, stamp)
+    database.prepare('INSERT INTO projects (id, name, created_at, updated_at, last_opened_at) VALUES (?, ?, ?, ?, ?)').run(projectId, 'Novel', stamp, stamp, stamp)
     const repository = createBinderRepository(database)
     for (let index = 0; index < 3; index += 1) {
       repository.create(record(`item-${index}`, 'folder', null, index))
@@ -93,7 +93,7 @@ describe('binder tree performance and batch ordering', () => {
     temporary = await createTemporaryDatabase()
     const database = openDatabase(temporary.path)
     runMigrations(database)
-    database.prepare('INSERT INTO projects VALUES (?, ?, ?, ?, ?)').run(projectId, 'Novel', stamp, stamp, stamp)
+    database.prepare('INSERT INTO projects (id, name, created_at, updated_at, last_opened_at) VALUES (?, ?, ?, ?, ?)').run(projectId, 'Novel', stamp, stamp, stamp)
     const repository = createBinderRepository(database)
     repository.create(record('item-0', 'folder', null, 0))
     const prepare = vi.spyOn(database, 'prepare')

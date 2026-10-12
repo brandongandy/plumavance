@@ -17,6 +17,9 @@ function projectResponse(): Response {
       createdAt: '2026-10-10T00:00:00.000Z',
       updatedAt: '2026-10-10T00:00:00.000Z',
       lastOpenedAt: '2026-10-10T00:00:00.000Z',
+      projectWordTarget: null,
+      dailyWordTarget: null,
+      dailyCountMode: 'additions',
     },
     items: [
       {

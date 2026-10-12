@@ -26,6 +26,11 @@ function loadMigrations(): Migration[] {
       name: 'snapshot-word-counts',
       sql: readFileSync(fileURLToPath(new URL('./migrations/003_snapshot_word_counts.sql', import.meta.url)), 'utf8'),
     },
+    {
+      version: 4,
+      name: 'word-count-tracking',
+      sql: readFileSync(fileURLToPath(new URL('./migrations/004_word_count_tracking.sql', import.meta.url)), 'utf8'),
+    },
   ]
 }
 

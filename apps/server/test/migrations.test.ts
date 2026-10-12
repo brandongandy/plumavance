@@ -25,9 +25,53 @@ describe('database migrations', () => {
     }
     const journalMode = database.pragma('journal_mode', { simple: true })
     const foreignKeys = database.pragma('foreign_keys', { simple: true })
-    expect(version.version).toBe(3)
+    const maxMigrationVersion = version.version
+    expect(maxMigrationVersion).toBe(4)
     expect(journalMode).toBe('wal')
     expect(foreignKeys).toBe(1)
+    database.close()
+  })
+
+  test('migration_adds_writing_defaults_to_existing_projects', async () => {
+    temporary = await createTemporaryDatabase()
+    const database = openDatabase(temporary.path)
+    database.exec(`
+      CREATE TABLE _migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);
+      ${readFileSync(new URL('../src/db/migrations/001_initial.sql', import.meta.url), 'utf8')}
+      INSERT INTO _migrations VALUES (1, 'initial', '2026-10-10T00:00:00.000Z');
+      INSERT INTO projects VALUES ('project-1', 'Novel', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z');
+    `)
+
+    runMigrations(database)
+
+    expect(database.prepare('SELECT project_word_target, daily_word_target, daily_count_mode FROM projects').get()).toEqual({
+      project_word_target: null,
+      daily_word_target: null,
+      daily_count_mode: 'additions',
+    })
+    database.close()
+  })
+
+  test('migration_enforces_writing_settings_and_cascades_word_count_events', async () => {
+    temporary = await createTemporaryDatabase()
+    const database = openDatabase(temporary.path)
+    runMigrations(database)
+    database.prepare('INSERT INTO projects (id, name, created_at, updated_at, last_opened_at) VALUES (?, ?, ?, ?, ?)')
+      .run('project-1', 'Novel', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z', '2026-10-10T00:00:00.000Z')
+
+    for (const column of ['project_word_target', 'daily_word_target']) {
+      for (const target of [0, -1, 1.5]) {
+        expect(() => database.prepare(`UPDATE projects SET ${column} = ? WHERE id = ?`).run(target, 'project-1')).toThrow()
+      }
+    }
+    expect(() => database.prepare('UPDATE projects SET daily_count_mode = ? WHERE id = ?').run('unknown', 'project-1')).toThrow()
+    database.prepare('INSERT INTO word_count_events (id, project_id, local_date, delta, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run('event-1', 'project-1', '2026-10-12', -5, '2026-10-12T00:00:00.000Z')
+    expect(database.prepare('SELECT delta FROM word_count_events').get()).toEqual({ delta: -5 })
+
+    database.prepare('DELETE FROM projects WHERE id = ?').run('project-1')
+
+    expect(database.prepare('SELECT count(*) AS count FROM word_count_events').get()).toEqual({ count: 0 })
     database.close()
   })
 

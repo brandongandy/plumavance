@@ -7,14 +7,7 @@ import type {
 import { z } from 'zod'
 
 import { apiRequest, apiRequestEmpty } from './client.js'
-
-const ProjectSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  lastOpenedAt: z.string(),
-})
+import { ProjectSchema } from './projects.js'
 
 const BinderItemSchema: z.ZodType<BinderItemDto> = z.object({
   id: z.string(),

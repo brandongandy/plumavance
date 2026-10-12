@@ -2,6 +2,7 @@ import {
   CreateProjectRequestSchema,
   DeleteProjectRequestSchema,
   UpdateProjectRequestSchema,
+  UpdateWritingSettingsRequestSchema,
 } from '@pluma/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -40,5 +41,11 @@ export function registerProjectRoutes(
     const input = DeleteProjectRequestSchema.parse(request.body)
     projects.delete(projectId, input.confirmation)
     return reply.status(204).send()
+  })
+
+  app.patch('/api/projects/:projectId/writing-settings', async (request) => {
+    const { projectId } = ProjectParamsSchema.parse(request.params)
+    const input = UpdateWritingSettingsRequestSchema.parse(request.body)
+    return projects.updateWritingSettings(projectId, input)
   })
 }
