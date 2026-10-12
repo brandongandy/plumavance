@@ -5,6 +5,14 @@ export const CompileFormatSchema = z.enum(['pdf', 'rtf', 'markdown', 'epub'])
 export const EreaderFontSchema = z.enum(['monospace', 'serif', 'sans-serif'])
 export const PaperbackPageSizeSchema = z.enum(['mass-market', 'digest', 'trade'])
 
+export const CompileWordCountRequestSchema = z.object({
+  itemIds: z.array(z.uuid()).min(1),
+}).strict()
+
+export const CompileWordCountResponseSchema = z.object({
+  wordCount: z.number().int().nonnegative(),
+})
+
 const CompileRequestBaseSchema = z.object({
   itemIds: z.array(z.uuid()).min(1),
   includeTitles: z.boolean(),
@@ -32,3 +40,4 @@ export type CompileFormat = z.infer<typeof CompileFormatSchema>
 export type EreaderFont = z.infer<typeof EreaderFontSchema>
 export type PaperbackPageSize = z.infer<typeof PaperbackPageSizeSchema>
 export type CompileRequest = z.infer<typeof CompileRequestSchema>
+export type CompileWordCountResponse = z.infer<typeof CompileWordCountResponseSchema>
