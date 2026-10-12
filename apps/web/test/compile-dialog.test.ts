@@ -1,8 +1,8 @@
 import type { BinderItemDto } from '@pluma/shared'
 import PrimeVue from 'primevue/config'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import CompileDialog from '../src/features/compile/CompileDialog.vue'
 import { useCompile } from '../src/features/compile/useCompile.js'
@@ -16,9 +16,119 @@ const nestedFolderId = '55555555-5555-4555-8555-555555555555'
 const stamp = '2026-10-10T00:00:00.000Z'
 const item = (id: string, title: string, kind: 'folder' | 'document', parentId: string | null, position: number): BinderItemDto => ({ id, projectId, title, kind, parentId, position, trashedAt: null, createdAt: stamp, updatedAt: stamp })
 
+beforeEach(() => { vi.stubGlobal('fetch', vi.fn(async () => Response.json({ wordCount: 0 }))) })
 afterEach(() => { vi.unstubAllGlobals(); document.body.innerHTML = '' })
+enableAutoUnmount(afterEach)
 
 describe('compile dialog', () => {
+  function countDialog(dirty = false) {
+    const pinia = createPinia(); setActivePinia(pinia)
+    useWorkspaceStore().$patch({ projectId, items: [item(folderId, 'Manuscript', 'folder', null, 0), item(firstId, 'Opening', 'document', folderId, 0), item(secondId, 'Ending', 'document', null, 1)] })
+    return mount(CompileDialog, { attachTo: document.body, props: { visible: true, dirty }, global: { plugins: [pinia, [PrimeVue, { unstyled: true }]] } })
+  }
+
+  test('counts_selected_folder_ids_and_clears_to_zero_without_requesting', async () => {
+    const fetch = vi.fn(async () => Response.json({ wordCount: 5 }))
+    vi.stubGlobal('fetch', fetch)
+    countDialog()
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('0 words')
+    expect(fetch).not.toHaveBeenCalled()
+    ;(document.querySelector<HTMLInputElement>(`input[value="${folderId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledWith(`/api/projects/${projectId}/compile/word-count`, expect.objectContaining({ method: 'POST', body: JSON.stringify({ itemIds: [folderId, firstId] }), signal: expect.any(AbortSignal) }))
+    expect(document.querySelector('[aria-label="Compile order"]')?.textContent).toContain('Order5 words')
+    ;(document.querySelector<HTMLInputElement>(`input[value="${folderId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('0 words')
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  test('keeps_the_latest_count_when_aborted_requests_resolve_out_of_order', async () => {
+    const requests: { resolve: (response: Response) => void; signal: AbortSignal }[] = []
+    vi.stubGlobal('fetch', vi.fn((_url: string, options: RequestInit) => new Promise<Response>((resolve) => requests.push({ resolve, signal: options.signal as AbortSignal }))))
+    countDialog()
+    await flushPromises()
+    ;(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('Counting…')
+    ;(document.querySelector<HTMLInputElement>(`input[value="${secondId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(requests[0]?.signal.aborted).toBe(true)
+    requests[1]?.resolve(Response.json({ wordCount: 8 }))
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('8 words')
+    requests[0]?.resolve(Response.json({ wordCount: 3 }))
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('8 words')
+  })
+
+  test('shows_a_count_error_without_disabling_compile_or_replacing_compile_errors', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ code: 'COUNT_FAILED', message: 'Word count unavailable.' }, { status: 503 })))
+    const wrapper = countDialog()
+    await wrapper.setProps({ error: 'Pandoc failed.' })
+    ;(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile order"] [role="alert"]')?.textContent).toContain('Word count unavailable.')
+    expect(document.body.textContent).toContain('Pandoc failed.')
+    const compile = document.querySelector<HTMLButtonElement>('[aria-label="Compile download"]') as HTMLButtonElement
+    expect(compile.disabled).toBe(false)
+    compile.click()
+    await flushPromises()
+    expect(wrapper.emitted('compile')?.[0]?.[0]).toMatchObject({ itemIds: [firstId] })
+  })
+
+  test('counts_saved_copy_only_after_the_dirty_gate_and_refreshes_after_save', async () => {
+    const fetch = vi.fn(async () => Response.json({ wordCount: 5 }))
+    vi.stubGlobal('fetch', fetch)
+    const wrapper = countDialog(true)
+    await flushPromises()
+    expect(fetch).not.toHaveBeenCalled()
+    ;(document.querySelector<HTMLButtonElement>('[aria-label="Compile saved copy"]') as HTMLButtonElement).click()
+    await flushPromises()
+    ;(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('5 words')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    fetch.mockResolvedValue(Response.json({ wordCount: 7 }))
+    await wrapper.setProps({ dirty: false })
+    await flushPromises()
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('7 words')
+  })
+
+  test('waits_for_a_successful_save_to_open_the_dirty_gate', async () => {
+    const fetch = vi.fn(async () => Response.json({ wordCount: 7 }))
+    vi.stubGlobal('fetch', fetch)
+    const wrapper = countDialog(true)
+    await flushPromises()
+    ;(document.querySelector<HTMLButtonElement>('[aria-label="Save before compile"]') as HTMLButtonElement).click()
+    await flushPromises()
+    expect(wrapper.emitted('save')).toHaveLength(1)
+    expect(fetch).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('Save changes before compiling?')
+    await wrapper.setProps({ dirty: false })
+    ;(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('7 words')
+  })
+
+  test('aborts_on_close_and_ignores_a_late_response_after_reopening', async () => {
+    let resolveCount!: (response: Response) => void
+    const fetch = vi.fn<(url: string, options: RequestInit) => Promise<Response>>(() => new Promise<Response>((resolve) => { resolveCount = resolve }))
+    vi.stubGlobal('fetch', fetch)
+    const wrapper = countDialog()
+    await flushPromises()
+    ;(document.querySelector<HTMLInputElement>(`input[value="${firstId}"]`) as HTMLInputElement).click()
+    await flushPromises()
+    await wrapper.setProps({ visible: false })
+    expect(fetch.mock.calls[0]?.[1].signal?.aborted).toBe(true)
+    await wrapper.setProps({ visible: true })
+    resolveCount(Response.json({ wordCount: 99 }))
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Compile word count"]')?.textContent).toBe('0 words')
+  })
+
   test('defaults_scene_and_chapter_break_controls', async () => {
     const pinia = createPinia(); setActivePinia(pinia)
     useWorkspaceStore().$patch({ projectId, items: [item(firstId, 'Opening', 'document', folderId, 0)] })

@@ -1,6 +1,15 @@
-import type { CompileRequest } from '@pluma/shared'
+import { CompileWordCountResponseSchema, type CompileRequest } from '@pluma/shared'
 
-import { ApiRequestError } from './client.js'
+import { ApiRequestError, apiRequest } from './client.js'
+
+export async function requestCompileWordCount(projectId: string, itemIds: string[], signal?: AbortSignal): Promise<number> {
+  const response = await apiRequest(`/api/projects/${projectId}/compile/word-count`, {
+    method: 'POST',
+    body: JSON.stringify({ itemIds }),
+    ...(signal ? { signal } : {}),
+  }, CompileWordCountResponseSchema)
+  return response.wordCount
+}
 
 export async function requestCompile(projectId: string, request: CompileRequest): Promise<Response> {
   const response = await fetch(`/api/projects/${projectId}/compile`, {

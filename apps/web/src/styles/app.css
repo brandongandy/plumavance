@@ -817,12 +817,31 @@ button {
 }
 
 .compile-selection legend,
-.compile-order > strong {
+.compile-order-heading {
   display: block;
   padding: 0 8px 6px;
   color: var(--color-muted);
   font-size: 11px;
   font-weight: 600;
+}
+
+.compile-order-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.compile-order-heading strong {
+  font-weight: 600;
+}
+
+.compile-order-heading [role="status"] {
+  font-weight: 400;
+}
+
+.compile-order .compile-count-error {
+  color: var(--color-danger);
 }
 
 .compile-selection label {

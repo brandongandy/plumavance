@@ -4,6 +4,7 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import { computed, ref, shallowRef, watch } from 'vue'
 
+import { requestCompileWordCount } from '../../api/compile.js'
 import { useWorkspaceStore } from '../../stores/workspace.js'
 import CompileOptions from './CompileOptions.vue'
 import CompileOrder from './CompileOrder.vue'
@@ -23,6 +24,10 @@ const sceneSeparator = shallowRef('#')
 const chapterPageBreaks = shallowRef(true)
 const filename = shallowRef(store.project?.name ?? 'Manuscript')
 const gateResolved = shallowRef(!props.dirty)
+const wordCount = shallowRef(0)
+const counting = shallowRef(false)
+const countError = shallowRef('')
+let countSequence = 0
 
 watch(() => props.visible, (visible) => {
   if (!visible) return
@@ -48,6 +53,32 @@ const orderedDocuments = computed(() => {
     return false
   })
 })
+
+watch(
+  [() => props.visible, gateResolved, () => props.dirty, () => store.projectId, selectedIds, () => orderedDocuments.value.map((document) => document.id).join(',')],
+  async (_values, _previous, onCleanup) => {
+    const sequence = ++countSequence
+    countError.value = ''
+    counting.value = false
+    wordCount.value = 0
+    if (!props.visible || !gateResolved.value || orderedDocuments.value.length === 0) return
+
+    const controller = new AbortController()
+    onCleanup(() => controller.abort())
+    counting.value = true
+    try {
+      const count = await requestCompileWordCount(store.projectId, selectedIds.value, controller.signal)
+      if (sequence === countSequence && !controller.signal.aborted) wordCount.value = count
+    } catch (error) {
+      if (sequence === countSequence && !controller.signal.aborted) {
+        countError.value = error instanceof Error ? error.message : 'Could not count words.'
+      }
+    } finally {
+      if (sequence === countSequence && !controller.signal.aborted) counting.value = false
+    }
+  },
+  { immediate: true },
+)
 
 function submit(): void {
   if (!filename.value.trim() || orderedDocuments.value.length === 0) return
@@ -85,7 +116,7 @@ function submit(): void {
     <template v-else>
       <div class="compile-grid">
         <CompileSelectionTree v-model="selectedIds" :items="store.items" />
-        <CompileOrder :documents="orderedDocuments" />
+        <CompileOrder :documents="orderedDocuments" :word-count="wordCount" :counting="counting" :count-error="countError" />
       </div>
       <CompileOptions
         v-model:export-type="exportType"
