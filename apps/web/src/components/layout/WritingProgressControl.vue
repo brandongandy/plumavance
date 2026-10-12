@@ -120,6 +120,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', outsidePointer
       <span v-if="hovered || focused" :id="`${id}-tooltip`" role="tooltip" class="writing-progress-tooltip">{{ tooltip }}</span>
       <section v-if="open" :id="`${id}-settings`" role="dialog" :aria-labelledby="`${id}-heading`" class="writing-progress-popover">
         <strong :id="`${id}-heading`">Writing progress</strong>
+        <p class="writing-progress-hint">Project: {{ props.projectWords.toLocaleString('en-US') }} words · Today: {{ store.dailyWordCount.toLocaleString('en-US') }} words</p>
         <form class="writing-progress-form" @submit.prevent="saveSettings">
           <label :for="`${id}-project`">Project word target</label>
           <input :id="`${id}-project`" ref="projectInput" v-model="projectTarget" aria-label="Project word target" inputmode="numeric" type="text" :disabled="busy" :aria-describedby="`${id}-hint`" />

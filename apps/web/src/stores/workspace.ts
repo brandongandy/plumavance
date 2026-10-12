@@ -95,7 +95,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     loading.value = true
     errorMessage.value = ''
     try {
-      const [detail] = await Promise.all([binderApi.getProject(id), useWritingProgressStore().load(id)])
+      const writing = useWritingProgressStore()
+      const progressLoading = writing.load(id)
+      const detail = await binderApi.getProject(id)
+      if (!isCurrent()) return
+      writing.seedSettings(detail.project)
+      await progressLoading
       if (!isCurrent()) return
       project.value = detail.project
       items.value = detail.items

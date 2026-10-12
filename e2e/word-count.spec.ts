@@ -16,6 +16,82 @@ async function settings(page: Page, project: string, daily: string, mode: 'addit
   await expect(page.getByRole('dialog', { name: 'Writing progress' })).toBeHidden()
 }
 
+test('uses native transactions to retain five plus three words across tabs and delayed duplicate acknowledgments', async ({ page, context }) => {
+  await createProject(page, 'Two Tab Word Counts')
+  await createDocument(page)
+  const other = await context.newPage()
+  await other.goto(page.url())
+  await other.getByLabel('Document editor').waitFor()
+  let release!: () => void
+  let accepted!: () => void
+  const held = new Promise<void>((resolve) => { release = resolve })
+  const firstAccepted = new Promise<void>((resolve) => { accepted = resolve })
+  let first = true
+  const payloads: Array<{ eventId: string; delta: number; localDate: string }> = []
+  await context.route('**/word-count-events', async (route) => {
+    payloads.push(route.request().postDataJSON())
+    const response = await route.fetch()
+    if (first) {
+      first = false
+      accepted()
+      await held
+    }
+    await route.fulfill({ response })
+  })
+  try {
+    await page.getByLabel('Document editor').fill('one two three four five')
+    await firstAccepted
+    await other.getByLabel('Document editor').fill('six seven eight')
+    const date = await page.evaluate(() => {
+      const now = new Date()
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+    })
+    const projectId = page.url().split('/').at(-1)
+    await expect.poll(async () => {
+      const response = await page.request.get(`/api/projects/${projectId}/writing-progress?localDate=${date}`)
+      return (await response.json()).dailyWordCount
+    }).toBe(8)
+    release()
+    await counts(page, 5, 8)
+    await counts(other, 3, 8)
+    for (const payload of payloads) {
+      for (const matching of payloads.filter((candidate) => candidate.eventId === payload.eventId)) expect(matching).toEqual(payload)
+    }
+    expect(new Set(payloads.map((payload) => payload.eventId)).size).toBe(2)
+    await other.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
+    await expect(other.getByRole('dialog', { name: 'Writing progress' })).toContainText('Today: 8 words')
+  } finally {
+    release()
+    await other.close()
+  }
+})
+
+test('retains a single daily count through lost acknowledgment, reload and failed native outbox replay', async ({ page }) => {
+  await createProject(page, 'Lost Ack Word Counts')
+  await createDocument(page)
+  let requests = 0
+  let firstLost!: () => void
+  const lost = new Promise<void>((resolve) => { firstLost = resolve })
+  await page.route('**/word-count-events', async (route) => {
+    if (++requests === 1) await route.fetch()
+    await route.abort('failed')
+    firstLost()
+  })
+  await page.getByLabel('Document editor').fill('one two three four five')
+  await lost
+  await page.reload()
+  await expect.poll(() => requests).toBeGreaterThan(1)
+  await counts(page, 0, 5)
+  await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Writing progress' })).toContainText('Not synced')
+  await page.keyboard.press('Escape')
+  await page.unroute('**/word-count-events')
+  await page.reload()
+  await counts(page, 0, 5)
+  await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Writing progress' })).toContainText('Synced')
+})
+
 test('tracks live writing, optional targets and modes, resets Edit Mode, and reconciles folder trash and restore', async ({ page }) => {
   await createProject(page, 'Word Count Journey')
   await createDocument(page)

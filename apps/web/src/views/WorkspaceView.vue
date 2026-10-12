@@ -97,7 +97,6 @@ async function saveDocument(): Promise<void> {
   store.items = store.items.map((item) =>
     item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
   )
-  await writingProgress.refresh()
 }
 
 async function keepMine(): Promise<void> {
@@ -105,7 +104,6 @@ async function keepMine(): Promise<void> {
   store.items = store.items.map((item) =>
     item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
   )
-  await writingProgress.refresh()
 }
 
 async function reloadServerCopy(): Promise<void> {

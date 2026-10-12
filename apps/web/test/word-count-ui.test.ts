@@ -52,6 +52,16 @@ async function statusBar(): Promise<VueWrapper> {
 }
 
 describe('writing status controls', () => {
+  test('shows exact live project and daily counts in the opened settings for touch users', async () => {
+    const wrapper = await statusBar()
+    await wrapper.get('[aria-label="Writing progress settings"]').trigger('click')
+    const dialog = wrapper.get('[role="dialog"]')
+    expect(dialog.text()).toContain('Project: 34,870 words')
+    expect(dialog.text()).toContain('Today: 612 words')
+    useWritingProgressStore().recordEditorDelta(5)
+    await nextTick()
+    expect(dialog.text()).toContain('Today: 617 words')
+  })
   test('shows live daily progress and exact counts on hover and keyboard focus without changing document counts', async () => {
     // Catches a missing live bar, incorrect target semantics, or losing current-document counts.
     const wrapper = await statusBar()
