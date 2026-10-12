@@ -2,6 +2,7 @@ export { HealthResponseSchema, type HealthResponse } from './schemas/health.js'
 export type {
   BinderItemDto,
   BinderItemKind,
+  DailyCountMode,
   DocumentDto,
   EditorDocument,
   EditorMark,
@@ -13,6 +14,8 @@ export type {
   SearchResultDto,
   SnapshotDto,
   SnapshotSummaryDto,
+  WordCountEventResultDto,
+  WritingProgressDto,
 } from './domain.js'
 export {
   CreateProjectRequestSchema,
@@ -23,6 +26,15 @@ export {
   type DeleteProjectRequest,
   type UpdateProjectRequest,
 } from './schemas/projects.js'
+export {
+  DailyCountModeSchema,
+  LocalDateSchema,
+  RecordWordCountEventRequestSchema,
+  UpdateWritingSettingsRequestSchema,
+  WritingTargetSchema,
+  type RecordWordCountEventRequest,
+  type UpdateWritingSettingsRequest,
+} from './schemas/word-count.js'
 export {
   BinderTitleSchema,
   CreateBinderItemRequestSchema,

@@ -26,7 +26,7 @@ describe('compile route', () => {
   test('find_many_loads_requested_documents_in_one_repository_call', () => {
     const database = openDatabase(temporary.path)
     runMigrations(database)
-    database.prepare('INSERT INTO projects VALUES (?, ?, ?, ?, ?)').run(
+    database.prepare('INSERT INTO projects (id, name, created_at, updated_at, last_opened_at) VALUES (?, ?, ?, ?, ?)').run(
       '11111111-1111-4111-8111-111111111111',
       'Novel',
       '2026-10-10T00:00:00.000Z',
