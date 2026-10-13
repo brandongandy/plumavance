@@ -1,6 +1,6 @@
 // Test transport for IndexedDB's atomic read/write boundary. Real browser E2E
 // exercises native transactions and storage notifications between pages.
-export function indexedDbFixture(): IDBFactory {
+export function indexedDbFixture(putError?: (value: unknown) => DOMException | undefined): IDBFactory {
   let value: unknown
   let tail = Promise.resolve()
   const database = {
@@ -14,11 +14,15 @@ export function indexedDbFixture(): IDBFactory {
           tail = tail.then(() => {
             request.result = value === undefined ? undefined : structuredClone(value)
             ;(request.onsuccess as () => void)()
-            ;(transaction.oncomplete as () => void)()
+            ;(transaction.error ? transaction.onabort as () => void : transaction.oncomplete as () => void)()
           })
           return request
         },
-        put(next: unknown) { value = structuredClone(next) },
+        put(next: unknown) {
+          const error = putError?.(next)
+          if (error) transaction.error = error
+          else value = structuredClone(next)
+        },
       })
       return transaction
     },

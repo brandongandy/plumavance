@@ -13,6 +13,7 @@ import { binderApi } from '../src/api/binder.js'
 import { useWorkspaceStore } from '../src/stores/workspace.js'
 import { useWritingProgressStore } from '../src/stores/writing-progress.js'
 import { outboxChangedKey, updateOutbox } from '../src/features/word-count/outbox.js'
+import { indexedDbFixture } from './indexed-db.js'
 
 const projectA = '11111111-1111-4111-8111-111111111111'
 const projectB = '22222222-2222-4222-8222-222222222222'
@@ -81,6 +82,138 @@ afterEach(() => {
 })
 
 describe('writing progress', () => {
+  test('authoritative progress includes cross-tab activity without overlaying an uncertain accepted batch', async () => {
+    let total = 10
+    let failReads = false
+    let lostAck = false
+    const accepted = new Set<string>()
+    const api = installApi({
+      get: () => failReads ? jsonResponse({ message: 'Progress unavailable' }, 503) : jsonResponse(progress({ dailyWordCount: total })),
+      post: (_id, event) => {
+        if (!accepted.has(event.eventId)) { accepted.add(event.eventId); total += event.delta }
+        return lostAck ? jsonResponse({ message: 'Response lost' }, 503) : jsonResponse({ localDate: event.localDate, dailyWordCount: total })
+      },
+    })
+    const tabA = useWritingProgressStore(createPinia())
+    const tabB = useWritingProgressStore(createPinia())
+    await tabA.load(projectA)
+    await tabB.load(projectA)
+    failReads = true
+    tabA.recordEditorDelta(5)
+    await tabA.flush()
+    await tabB.refresh()
+    expect(tabB.dailyWordCount).toBe(10)
+    lostAck = true
+    tabB.recordEditorDelta(3)
+    await tabB.flush()
+    expect(total).toBe(18)
+    tabA.dispose()
+    tabB.dispose()
+    failReads = false
+    const recovered = useWritingProgressStore(createPinia())
+    await recovered.load(projectA)
+    await recovered.flush()
+    expect(recovered.dailyWordCount).toBe(18)
+    expect(recovered.syncState).toBe('failed')
+    expect(api.events.filter(({ event }) => event.delta === 3).every(({ event }) => event.eventId === api.events[1]?.event.eventId)).toBe(true)
+    recovered.recordEditorDelta(2)
+    expect(recovered.dailyWordCount).toBe(20)
+    recovered.dispose()
+  })
+
+  test('shows authoritative progress for an unaccepted uncertain batch while retaining new pending optimism', async () => {
+    const api = installApi({ post: () => jsonResponse({ message: 'Offline' }, 503) })
+    const original = useWritingProgressStore(createPinia())
+    await original.load(projectA)
+    original.recordEditorDelta(5)
+    await original.flush()
+    original.dispose()
+    const recovered = useWritingProgressStore(createPinia())
+    await recovered.load(projectA)
+    await recovered.flush()
+    expect(recovered.dailyWordCount).toBe(10)
+    expect(recovered.syncState).toBe('failed')
+    recovered.recordEditorDelta(3)
+    expect(recovered.dailyWordCount).toBe(13)
+    await recovered.flush()
+    expect(api.events.every(({ event }) => event.delta === 5)).toBe(true)
+    expect((await updateOutbox()).pending[0]?.delta).toBe(3)
+    recovered.dispose()
+  })
+
+  test('retries locally retained edits after a recoverable put failure before promoting later edits', async () => {
+    let failPut = true
+    vi.stubGlobal('indexedDB', indexedDbFixture((value) => {
+      const pending = (value as { pending: Array<{ delta: number }> }).pending
+      if (failPut && pending.some((batch) => batch.delta === 5)) return new DOMException('Storage is temporarily full', 'QuotaExceededError')
+      return undefined
+    }))
+    const api = installApi()
+    const store = useWritingProgressStore()
+    await store.load(projectA)
+    store.recordEditorDelta(5)
+    await flushPromises()
+    expect(store.dailyWordCount).toBe(15)
+    expect(store.syncState).toBe('failed')
+    expect(store.errorMessage).toContain('saved locally')
+    failPut = false
+    store.recordEditorDelta(3)
+    await store.flush()
+    expect(api.events.map(({ event }) => event.delta)).toEqual([8])
+    expect(store.dailyWordCount).toBe(18)
+    expect(store.syncState).toBe('synced')
+    expect(store.errorMessage).toBe('')
+    store.dispose()
+    const recovered = useWritingProgressStore(createPinia())
+    installApi({ get: () => jsonResponse(progress({ dailyWordCount: 18 })) })
+    await recovered.load(projectA)
+    expect(recovered.dailyWordCount).toBe(18)
+    recovered.dispose()
+  })
+
+  test('keeps a persistent local put failure visible and sends no partially retained activity', async () => {
+    vi.stubGlobal('indexedDB', indexedDbFixture((value) => {
+      const queue = value as { inFlight: unknown; pending: Array<{ delta: number }> }
+      return queue.inFlight || queue.pending.length ? new DOMException('Storage is full', 'QuotaExceededError') : undefined
+    }))
+    const api = installApi()
+    const store = useWritingProgressStore()
+    await store.load(projectA)
+    store.recordEditorDelta(5)
+    await flushPromises()
+    await store.flush()
+    expect(api.events).toHaveLength(0)
+    expect(store.dailyWordCount).toBe(15)
+    expect(store.syncState).toBe('failed')
+    expect(store.errorMessage).toContain('saved locally')
+  })
+
+  test('retries retained edits on flush alone and keeps edits made after flush in a later batch', async () => {
+    let failPut = true
+    vi.stubGlobal('indexedDB', indexedDbFixture((value) => {
+      const pending = (value as { pending: Array<{ delta: number }> }).pending
+      return failPut && pending.length ? new DOMException('Storage is full', 'QuotaExceededError') : undefined
+    }))
+    const first = deferredResponse()
+    const api = installApi({ post: (_id, event) => event.delta === 5 ? first.promise : jsonResponse({ localDate: event.localDate, dailyWordCount: 18 }) })
+    const store = useWritingProgressStore()
+    await store.load(projectA)
+    store.recordEditorDelta(5)
+    await flushPromises()
+    failPut = false
+    const flushing = store.flush()
+    store.recordEditorDelta(3)
+    await flushPromises()
+    expect(api.events.map(({ event }) => event.delta)).toEqual([5])
+    expect(store.syncState).toBe('syncing')
+    expect(store.errorMessage).toBe('')
+    first.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
+    await flushing
+    expect(api.events.map(({ event }) => event.delta)).toEqual([5, 3])
+    expect(store.dailyWordCount).toBe(18)
+    expect(store.syncState).toBe('synced')
+  })
+
   test('retains the durable pre-send daily baseline when progress and replay both fail after reload', async () => {
     let reads = 0
     installApi({
@@ -358,7 +491,7 @@ describe('writing progress', () => {
     const recovered = useWritingProgressStore()
     await recovered.load(projectA)
     await flushPromises()
-    expect(recovered.dailyWordCount).toBe(15)
+    expect(recovered.dailyWordCount).toBe(10)
     expect(replayApi.events[0]?.event).toEqual(original)
     retry.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
     await flushPromises()
@@ -419,7 +552,7 @@ describe('writing progress', () => {
   })
 
   test('reconciles a reopened project after an older in-flight batch is acknowledged', async () => {
-    // Catches silently losing the optimistic total when the load sequence changes for the same project.
+    // Catches losing authoritative GET or acknowledgment totals after the same project is reopened.
     const response = deferredResponse()
     let total = 10
     installApi({
@@ -431,7 +564,7 @@ describe('writing progress', () => {
     store.recordEditorDelta(5)
     const flushing = store.flush()
     await store.load(projectA)
-    expect(store.dailyWordCount).toBe(15)
+    expect(store.dailyWordCount).toBe(10)
     total = 15
     response.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
     await flushing
@@ -458,7 +591,7 @@ describe('writing progress', () => {
     store.recordEditorDelta(5)
     const flushing = store.flush()
     await store.load(projectA)
-    expect(store.dailyWordCount).toBe(15)
+    expect(store.dailyWordCount).toBe(10)
     eventResponse.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
     await flushing
     reconciliation.resolve(jsonResponse({ message: 'Progress unavailable' }, 503))

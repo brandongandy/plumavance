@@ -38,14 +38,21 @@ export async function updateOutbox(change: (queue: Outbox) => void = () => {}): 
     const request = store.get('queue')
     let result: Outbox
     request.onsuccess = () => {
-      let stored: unknown = request.result
-      if (stored === undefined && legacy) {
-        try { stored = JSON.parse(legacy); migrated = true } catch { /* Ignore malformed legacy data. */ }
+      try {
+        let stored: unknown = request.result
+        if (stored === undefined && legacy) {
+          try { stored = JSON.parse(legacy); migrated = true } catch { /* Ignore malformed legacy data. */ }
+        }
+        const parsed = QueueSchema.safeParse(stored)
+        result = parsed.success ? parsed.data : { inFlight: null, pending: [] }
+        change(result)
+        store.put(result, 'queue')
+      } catch (error) {
+        // put() can throw synchronously (for example, QuotaExceededError).
+        // Abort explicitly so the caller can retain and retry its local edits.
+        transaction.abort()
+        reject(error)
       }
-      const parsed = QueueSchema.safeParse(stored)
-      result = parsed.success ? parsed.data : { inFlight: null, pending: [] }
-      change(result)
-      store.put(result, 'queue')
     }
     transaction.oncomplete = () => { database.close(); resolve(result) }
     transaction.onabort = transaction.onerror = () => { database.close(); reject(transaction.error) }
