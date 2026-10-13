@@ -55,12 +55,14 @@ test('typewriter_mode_centers_the_first_and_last_paragraphs', async ({ page }) =
   await page.keyboard.type('Middle')
   await page.keyboard.press('Enter')
   await page.keyboard.type('Last')
+  await page.keyboard.press('Shift+ArrowLeft')
+  await page.keyboard.press('Shift+ArrowLeft')
   await page.getByRole('button', { name: 'Focus' }).click()
   await expect(page.locator('.workspace-shell')).toHaveClass(/is-focus-mode/)
+  await expect(editor).toBeFocused()
 
-  await editor.focus()
-  await page.keyboard.press('ControlOrMeta+End')
-  await page.keyboard.type('!')
+  await page.keyboard.type('X')
+  await expect(editor.locator('p').last()).toHaveText('LaX')
   await page.waitForTimeout(250)
   const lastCenter = await editor.locator('p').last().evaluate((node) => {
     const rect = node.getBoundingClientRect()
