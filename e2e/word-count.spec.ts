@@ -99,6 +99,41 @@ test('retries retained native activity after one recoverable IndexedDB put failu
   expect(errors).toEqual([])
 })
 
+test('clears native persistence failure after immediate flush retries the still-pending initial write', async ({ page }) => {
+  await createProject(page, 'Immediate Flush Storage Recovery')
+  await createDocument(page)
+  await page.evaluate(() => {
+    const timer = window.setTimeout.bind(window)
+    window.setTimeout = ((handler: TimerHandler, delay?: number, ...args: unknown[]) => {
+      if (delay === 500 && typeof handler === 'function') {
+        queueMicrotask(() => handler(...args))
+        return 0
+      }
+      return timer(handler, delay, ...args)
+    }) as typeof window.setTimeout
+    const put = IDBObjectStore.prototype.put
+    let failOnce = true
+    IDBObjectStore.prototype.put = function (value, key) {
+      if (failOnce && value?.pending?.some((batch: { delta: number }) => batch.delta === 5)) {
+        failOnce = false
+        throw new DOMException('Storage is temporarily full', 'QuotaExceededError')
+      }
+      return put.call(this, value, key)
+    }
+  })
+  const deltas: number[] = []
+  page.on('request', (request) => {
+    if (request.url().endsWith('/word-count-events')) deltas.push(request.postDataJSON().delta)
+  })
+  await page.getByLabel('Document editor').fill('one two three four five')
+  await expect.poll(() => deltas).toEqual([5])
+  await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Writing progress' })
+  await expect(dialog.getByRole('status')).toHaveText('Synced')
+  await expect(dialog.getByRole('alert')).toHaveCount(0)
+  await expect(dialog).toContainText('Today: 5 words')
+})
+
 test('uses native transactions to retain five plus three words across tabs and delayed duplicate acknowledgments', async ({ page, context }) => {
   await createProject(page, 'Two Tab Word Counts')
   await createDocument(page)

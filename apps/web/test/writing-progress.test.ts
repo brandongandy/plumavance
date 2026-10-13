@@ -188,6 +188,57 @@ describe('writing progress', () => {
     expect(store.errorMessage).toContain('saved locally')
   })
 
+  test('clears a recovered put failure after an immediate flush waits for the initial failed write', async () => {
+    let failed = false
+    vi.stubGlobal('indexedDB', indexedDbFixture((value) => {
+      const pending = (value as { pending: Array<{ delta: number }> }).pending
+      if (!failed && pending.some((batch) => batch.delta === 5)) {
+        failed = true
+        return new DOMException('Storage is temporarily full', 'QuotaExceededError')
+      }
+      return undefined
+    }))
+    const api = installApi()
+    const store = useWritingProgressStore()
+    await store.load(projectA)
+    store.recordEditorDelta(5)
+    await store.flush()
+    expect(api.events.map(({ event }) => event.delta)).toEqual([5])
+    expect(await updateOutbox()).toEqual({ inFlight: null, pending: [] })
+    expect(store.dailyWordCount).toBe(15)
+    expect(store.syncState).toBe('synced')
+    expect(store.errorMessage).toBe('')
+  })
+
+  test('keeps a newer put failure visible after an earlier immediate-flush retry commits', async () => {
+    let firstFailed = false
+    vi.stubGlobal('indexedDB', indexedDbFixture((value) => {
+      const queue = value as { inFlight: { delta: number } | null; pending: Array<{ delta: number }> }
+      if ((!firstFailed && queue.pending.some((batch) => batch.delta === 5)) ||
+        queue.inFlight?.delta === 3 || queue.pending.some((batch) => batch.delta === 3)) {
+        firstFailed = true
+        return new DOMException('Storage is full', 'QuotaExceededError')
+      }
+      return undefined
+    }))
+    const response = deferredResponse()
+    const api = installApi({ post: () => response.promise })
+    const store = useWritingProgressStore()
+    await store.load(projectA)
+    store.recordEditorDelta(5)
+    const flushing = store.flush()
+    store.recordEditorDelta(3)
+    await flushPromises()
+    expect(api.events.map(({ event }) => event.delta)).toEqual([5])
+    expect(store.syncState).toBe('failed')
+    response.resolve(jsonResponse({ localDate: '2026-10-12', dailyWordCount: 15 }))
+    await flushing
+    expect(api.events.map(({ event }) => event.delta)).toEqual([5])
+    expect(store.dailyWordCount).toBe(18)
+    expect(store.syncState).toBe('failed')
+    expect(store.errorMessage).toContain('saved locally')
+  })
+
   test('retries retained edits on flush alone and keeps edits made after flush in a later batch', async () => {
     let failPut = true
     vi.stubGlobal('indexedDB', indexedDbFixture((value) => {
