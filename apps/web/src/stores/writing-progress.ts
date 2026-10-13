@@ -15,6 +15,13 @@ import {
   millisecondsUntilNextLocalMidnight,
 } from '../features/word-count/activity.js'
 
+function appendPending(queue: Outbox, edit: Batch): void {
+  const existing = queue.pending.findIndex((batch) => batch.projectId === edit.projectId && batch.localDate === edit.localDate)
+  if (existing < 0) queue.pending.push(edit)
+  else queue.pending[existing] = { ...queue.pending[existing]!, delta: queue.pending[existing]!.delta + edit.delta }
+  queue.pending = queue.pending.filter((batch) => batch.delta !== 0)
+}
+
 export const useWritingProgressStore = defineStore('writing-progress', () => {
   const projectId = shallowRef<string | null>(null)
   const localDate = shallowRef('')
@@ -120,15 +127,10 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
       // A newer event acknowledgement already supplies the authoritative daily total.
       if (revision === dailyRevision) {
         const outstanding = _inFlight.value
-        if (outstanding?.projectId === id && outstanding.localDate === date) {
-          // Replay owns daily reconciliation until acknowledgment. A later GET
-          // can already include this UUID, so retain its pre-send baseline.
-          _serverDailyWordCount.value = outstanding.baselineDailyWordCount ?? progress.dailyWordCount
-          includedInRead.value = outstanding.baselineDailyWordCount === undefined ? outstanding.eventId : null
-        } else {
-          _serverDailyWordCount.value = progress.dailyWordCount
-          includedInRead.value = null
-        }
+        // GET owns the confirmed total. An uncertain in-flight UUID may already
+        // be included; only unsent pending/local edits can safely overlay it.
+        _serverDailyWordCount.value = progress.dailyWordCount
+        includedInRead.value = outstanding?.projectId === id && outstanding.localDate === date ? outstanding.eventId : null
       }
       _progressFailed.value = false
     } catch (error) {
@@ -187,10 +189,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     localEdits.value = [...localEdits.value, edit]
     persisting = persisting.then(async () => {
       const queue = await updateOutbox((queue) => {
-        const existing = queue.pending.findIndex((batch) => batch.projectId === edit.projectId && batch.localDate === edit.localDate)
-        if (existing < 0) queue.pending.push(edit)
-        else queue.pending[existing] = { ...queue.pending[existing]!, delta: queue.pending[existing]!.delta + edit.delta }
-        queue.pending = queue.pending.filter((batch) => batch.delta !== 0)
+        appendPending(queue, edit)
       })
       applyQueue(queue)
       localEdits.value = localEdits.value.filter((batch) => batch.eventId !== edit.eventId)
@@ -207,14 +206,29 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     const id = projectId.value
     const date = localDate.value
     const baseline = _serverDailyWordCount.value
-    const frozen = persisting.then(() => updateOutbox((queue) => {
-      if (!queue.inFlight && queue.pending.length) {
-        const next = queue.pending.shift()!
-        queue.inFlight = { ...next, ...(next.projectId === id && next.localDate === date
-          ? { baselineDailyWordCount: baseline } : {}) }
+    const editsAtFlush = localEdits.value
+    let retained: Batch[] = []
+    const frozen = persisting.then(() => {
+      // Earlier writes have settled. Retry failed edits from this flush boundary;
+      // newer editor writes remain queued behind promotion as a later batch.
+      retained = editsAtFlush.filter((edit) => localEdits.value.some((pending) => pending.eventId === edit.eventId))
+      return updateOutbox((queue) => {
+        for (const edit of retained) appendPending(queue, edit)
+        if (!queue.inFlight && queue.pending.length) {
+          const next = queue.pending.shift()!
+          queue.inFlight = { ...next, ...(next.projectId === id && next.localDate === date
+            ? { baselineDailyWordCount: baseline } : {}) }
+        }
+      })
+    })
+    persisting = frozen.then((queue) => {
+      localEdits.value = localEdits.value.filter((edit) => !retained.some((saved) => saved.eventId === edit.eventId))
+      applyQueue(queue)
+      if (retained.length) {
+        notifyTabs()
+        if (!_progressFailed.value && !_syncFailed.value) errorMessage.value = ''
       }
-    }))
-    persisting = frozen.then(applyQueue).catch(() => {
+    }).catch(() => {
       _syncFailed.value = true
       errorMessage.value = 'Writing activity could not be saved locally.'
     })

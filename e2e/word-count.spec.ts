@@ -16,6 +16,89 @@ async function settings(page: Page, project: string, daily: string, mode: 'addit
   await expect(page.getByRole('dialog', { name: 'Writing progress' })).toBeHidden()
 }
 
+test('reconciles authoritative native progress after a stale cross-tab baseline and lost acknowledgment', async ({ page, context }) => {
+  await createProject(page, 'Residual Cross Tab Baseline')
+  await createDocument(page)
+  const id = page.url().split('/').at(-1)
+  const seed = await page.evaluate(() => {
+    const now = new Date()
+    return { eventId: crypto.randomUUID(), localDate: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`, delta: 10 }
+  })
+  await page.request.post(`/api/projects/${id}/word-count-events`, { data: seed })
+  await page.reload()
+  await counts(page, 0, 10)
+  const other = await context.newPage()
+  await other.goto(page.url())
+  await counts(other, 0, 10)
+  let failProgress = true
+  await other.route('**/writing-progress?*', async (route) => {
+    if (failProgress) await route.abort('failed')
+    else await route.continue()
+  })
+  let lost!: () => void
+  const acknowledgmentLost = new Promise<void>((resolve) => { lost = resolve })
+  let attempts = 0
+  await other.route('**/word-count-events', async (route) => {
+    if (++attempts === 1) await route.fetch()
+    await route.abort('failed')
+    lost()
+  })
+  try {
+    await page.getByLabel('Document editor').fill('one two three four five')
+    await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: 'Writing progress' }).getByRole('status')).toHaveText('Synced')
+    await page.keyboard.press('Escape')
+    await other.getByLabel('Document editor').fill('six seven eight')
+    await acknowledgmentLost
+    failProgress = false
+    await other.reload()
+    await expect.poll(() => attempts).toBeGreaterThan(1)
+    await counts(other, 0, 18)
+    await other.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
+    await expect(other.getByRole('dialog', { name: 'Writing progress' }).getByRole('status')).toHaveText('Not synced')
+    const response = await other.request.get(`/api/projects/${id}/writing-progress?localDate=${seed.localDate}`)
+    expect((await response.json()).dailyWordCount).toBe(18)
+  } finally {
+    await other.close()
+  }
+})
+
+test('retries retained native activity after one recoverable IndexedDB put failure', async ({ page }) => {
+  await createProject(page, 'Residual Storage Recovery')
+  await createDocument(page)
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put
+    let failOnce = true
+    IDBObjectStore.prototype.put = function (value, key) {
+      if (failOnce && value?.pending?.some((batch: { delta: number }) => batch.delta === 5)) {
+        failOnce = false
+        throw new DOMException('Storage is temporarily full', 'QuotaExceededError')
+      }
+      return put.call(this, value, key)
+    }
+  })
+  const deltas: number[] = []
+  page.on('request', (request) => {
+    if (request.url().endsWith('/word-count-events')) deltas.push(request.postDataJSON().delta)
+  })
+  await page.getByLabel('Document editor').fill('one two three four five')
+  await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Writing progress' }).getByRole('alert')).toContainText('saved locally')
+  await page.keyboard.press('Escape')
+  await page.getByLabel('Document editor').fill('one two three four five six seven eight')
+  await expect.poll(() => deltas.length).toBeGreaterThan(0)
+  expect(deltas).toEqual([8])
+  await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Writing progress' }).getByRole('status')).toHaveText('Synced')
+  await expect(page.getByRole('dialog', { name: 'Writing progress' }).getByRole('alert')).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await page.reload()
+  await counts(page, 0, 8)
+  expect(errors).toEqual([])
+})
+
 test('uses native transactions to retain five plus three words across tabs and delayed duplicate acknowledgments', async ({ page, context }) => {
   await createProject(page, 'Two Tab Word Counts')
   await createDocument(page)
