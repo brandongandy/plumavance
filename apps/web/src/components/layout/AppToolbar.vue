@@ -46,7 +46,14 @@ const router = useRouter()
       @click="emit('save')"
     />
     <Button label="Compile" icon="pi pi-file-export" text class="workspace-toolbar-button" @click="emit('compile', $event)" />
-    <Button label="Focus" icon="pi pi-expand" text class="workspace-toolbar-button" @click="emit('focus')" />
+    <Button
+      label="Focus"
+      icon="pi pi-expand"
+      text
+      class="workspace-toolbar-button"
+      @mousedown.prevent
+      @click="emit('focus')"
+    />
     <Button
       icon="pi pi-info-circle"
       text
