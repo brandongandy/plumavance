@@ -44,6 +44,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
   let dailyRevision = 0
   let settingsRevision = 0
   let projectRevision = 0
+  let persistenceFailureRevision = 0
   let disposed = false
   let midnightTimer: ReturnType<typeof setTimeout> | undefined
   let debounceTimer: ReturnType<typeof setTimeout> | undefined
@@ -65,6 +66,12 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     _pending.value = queue.pending
   }
 
+  function persistenceFailed(): void {
+    persistenceFailureRevision += 1
+    _syncFailed.value = true
+    errorMessage.value = 'Writing activity could not be saved locally.'
+  }
+
   function notifyTabs(): void {
     try { localStorage.setItem(outboxChangedKey, eventUuid()) } catch { /* The outbox remains durable. */ }
   }
@@ -76,10 +83,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
 
   function storageChanged(event: StorageEvent): void {
     if (disposed || event.key !== outboxChangedKey) return
-    void syncQueue().then(() => readProgress()).catch(() => {
-      _syncFailed.value = true
-      errorMessage.value = 'Writing activity could not be saved locally.'
-    })
+    void syncQueue().then(() => readProgress()).catch(persistenceFailed)
   }
   window.addEventListener('storage', storageChanged)
 
@@ -162,10 +166,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     includedInRead.value = null
     _progressFailed.value = false
     scheduleMidnight()
-    try { await syncQueue() } catch {
-      _syncFailed.value = true
-      errorMessage.value = 'Writing activity could not be saved locally.'
-    }
+    try { await syncQueue() } catch { persistenceFailed() }
     if (!isCurrent(id, sequence)) return
     const outstanding = _inFlight.value
     if (outstanding?.projectId === id && outstanding.localDate === localDate.value && outstanding.baselineDailyWordCount !== undefined) {
@@ -194,10 +195,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
       applyQueue(queue)
       localEdits.value = localEdits.value.filter((batch) => batch.eventId !== edit.eventId)
       notifyTabs()
-    }).catch(() => {
-      _syncFailed.value = true
-      errorMessage.value = 'Writing activity could not be saved locally.'
-    })
+    }).catch(persistenceFailed)
     clearTimeout(debounceTimer)
     debounceTimer = setTimeout(() => { void flush() }, 500)
   }
@@ -208,10 +206,12 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     const baseline = _serverDailyWordCount.value
     const editsAtFlush = localEdits.value
     let retained: Batch[] = []
+    let recoveredFailureRevision = 0
     const frozen = persisting.then(() => {
       // Earlier writes have settled. Retry failed edits from this flush boundary;
       // newer editor writes remain queued behind promotion as a later batch.
       retained = editsAtFlush.filter((edit) => localEdits.value.some((pending) => pending.eventId === edit.eventId))
+      recoveredFailureRevision = persistenceFailureRevision
       return updateOutbox((queue) => {
         for (const edit of retained) appendPending(queue, edit)
         if (!queue.inFlight && queue.pending.length) {
@@ -226,12 +226,12 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
       applyQueue(queue)
       if (retained.length) {
         notifyTabs()
-        if (!_progressFailed.value && !_syncFailed.value) errorMessage.value = ''
+        if (recoveredFailureRevision === persistenceFailureRevision) {
+          _syncFailed.value = false
+          if (!_progressFailed.value) errorMessage.value = ''
+        }
       }
-    }).catch(() => {
-      _syncFailed.value = true
-      errorMessage.value = 'Writing activity could not be saved locally.'
-    })
+    }).catch(persistenceFailed)
     return frozen
   }
 
@@ -294,10 +294,7 @@ export const useWritingProgressStore = defineStore('writing-progress', () => {
     clearTimeout(debounceTimer)
     if (disposed) return Promise.resolve()
     if (!sending) {
-      sending = sendBatches().catch(() => {
-        _syncFailed.value = true
-        errorMessage.value = 'Writing activity could not be saved locally.'
-      }).finally(() => { sending = undefined })
+      sending = sendBatches().catch(persistenceFailed).finally(() => { sending = undefined })
     }
     return sending
   }
