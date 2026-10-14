@@ -36,6 +36,7 @@ const compileTrigger = ref<HTMLElement | null>(null)
 const workspaceRoot = ref<HTMLElement | null>(null)
 const focusMode = useFocusMode(workspaceRoot)
 const layout = ref<WorkspaceLayout>(layoutForWidth(window.innerWidth))
+const canSave = computed(() => Boolean(documentStore.documentId) && documentStore.saveState !== 'saving' && documentStore.isDirty)
 
 const folderChildren = computed(() => {
   const active = store.activeItem
@@ -75,6 +76,44 @@ function selectPanel(panel: WorkspacePanel): void {
 function openCompile(event: Event): void {
   compileTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   compileVisible.value = true
+}
+
+function openCompileFromKeyboard(): void {
+  if (compileVisible.value) return
+  compileTrigger.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  compileVisible.value = true
+}
+
+async function enterFocusMode(): Promise<void> {
+  const editor = workspaceRoot.value?.querySelector<HTMLElement>('[aria-label="Document editor"]')
+  if (!editor) return
+  await focusMode.enter()
+  await nextTick()
+  editor.focus({ preventScroll: true })
+}
+
+function handleWorkspaceShortcut(event: KeyboardEvent): void {
+  if (event.repeat || event.altKey || (!event.metaKey && !event.ctrlKey)) return
+  const key = event.key.toLocaleLowerCase()
+
+  if (!event.shiftKey && key === 's') {
+    if (event.defaultPrevented) return
+    event.preventDefault()
+    if (canSave.value) void saveDocument()
+    return
+  }
+  if (!event.shiftKey) return
+  if ((key === 'e' || key === 'enter') && compileVisible.value) {
+    event.preventDefault()
+    return
+  }
+  if (key === 'e') {
+    event.preventDefault()
+    openCompileFromKeyboard()
+  } else if (key === 'enter') {
+    event.preventDefault()
+    if (!focusMode.isActive.value) void enterFocusMode()
+  }
 }
 
 async function closeCompile(): Promise<void> {
@@ -125,10 +164,12 @@ watch(
 
 onMounted(() => {
   window.addEventListener('resize', updateLayout)
+  window.addEventListener('keydown', handleWorkspaceShortcut)
 })
 watch(() => route.params.projectId, (projectId) => { void store.load(String(projectId)) }, { immediate: true })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateLayout)
+  window.removeEventListener('keydown', handleWorkspaceShortcut)
   void writingProgress.flush()
   writingProgress.dispose()
 })
@@ -140,12 +181,13 @@ onBeforeUnmount(() => {
       :project-name="store.project?.name ?? 'Opening project…'"
       :binder-open="layout === 'desktop' ? store.binderOpen : store.activePanel === 'binder'"
       :inspector-open="layout === 'desktop' ? store.inspectorOpen : store.activePanel === 'inspector'"
-      :save-disabled="!documentStore.documentId || documentStore.saveState === 'saving' || !documentStore.isDirty"
+      :save-disabled="!canSave"
+      :focus-disabled="!documentStore.documentId"
       @toggle-binder="toggleBinder"
       @toggle-inspector="toggleInspector"
       @save="saveDocument"
       @compile="openCompile"
-      @focus="focusMode.enter"
+      @focus="enterFocusMode"
     />
 
     <p v-if="store.loading" role="status" class="workspace-message">Opening project…</p>

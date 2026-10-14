@@ -106,6 +106,159 @@ afterEach(() => {
 })
 
 describe('workspace layout', () => {
+  test('shows_mac_shortcuts_when_toolbar_actions_are_hovered', async () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel')
+    const wrapper = await mountWorkspace()
+    const cases = [
+      ['Save document', 'Save (Cmd+S)'],
+      ['Compile', 'Show Compile options (Cmd+Shift+E)'],
+      ['Focus', 'Enter Focus mode (Cmd+Shift+Enter)'],
+    ] as const
+
+    for (const [buttonLabel, tooltip] of cases) {
+      const button = wrapper.get(`button[aria-label="${buttonLabel}"]`)
+      button.element.parentElement?.dispatchEvent(new MouseEvent('mouseenter'))
+      await nextTick()
+      expect(wrapper.get('[role="tooltip"]').text()).toBe(tooltip)
+      button.element.parentElement?.dispatchEvent(new MouseEvent('mouseleave'))
+      await nextTick()
+    }
+  })
+
+  test('shows_only_the_hovered_tooltip_when_another_toolbar_action_has_focus', async () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel')
+    const wrapper = await mountWorkspace()
+    const compile = wrapper.get('button[aria-label="Compile"]')
+    const focus = wrapper.get('button[aria-label="Focus"]')
+    compile.element.focus()
+    await nextTick()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('Show Compile options (Cmd+Shift+E)')
+    focus.element.parentElement?.dispatchEvent(new MouseEvent('mouseenter'))
+    await nextTick()
+
+    const tooltips = wrapper.findAll('[role="tooltip"]')
+    expect(tooltips).toHaveLength(1)
+    expect(tooltips[0]?.text()).toBe('Enter Focus mode (Cmd+Shift+Enter)')
+  })
+
+  test('saves_a_dirty_document_with_the_workspace_shortcut', async () => {
+    const wrapper = await mountWorkspace()
+    const title = wrapper.get<HTMLInputElement>('[aria-label="Document title"]')
+    await title.setValue('Shortcut draft')
+    expect(useDocumentStore().isDirty).toBe(true)
+
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 's',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    title.element.dispatchEvent(shortcut)
+    await flushPromises()
+
+    expect(shortcut.defaultPrevented).toBe(true)
+    expect(useDocumentStore().isDirty).toBe(false)
+  })
+
+  test('opens_compile_from_the_workspace_shortcut_and_restores_focus_on_close', async () => {
+    const wrapper = await mountWorkspace()
+    const title = wrapper.get<HTMLInputElement>('[aria-label="Document title"]')
+    title.element.focus()
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'e',
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    title.element.dispatchEvent(shortcut)
+    await flushPromises()
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    expect(shortcut.defaultPrevented).toBe(true)
+    expect(dialog?.textContent).toContain('Compile')
+
+    const cancel = Array.from(dialog?.querySelectorAll('button') ?? [])
+      .find((button) => button.textContent?.trim() === 'Cancel')
+    cancel?.click()
+    await flushPromises()
+    expect(title.element).toBe(document.activeElement)
+  })
+
+  test('renders_compile_inside_the_workspace_fullscreen_boundary', async () => {
+    const wrapper = await mountWorkspace()
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'e',
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    window.dispatchEvent(shortcut)
+    await flushPromises()
+
+    const dialog = document.querySelector('[role="dialog"]')
+    expect(dialog).not.toBeNull()
+    expect(wrapper.get('.workspace-shell').element.contains(dialog)).toBe(true)
+  })
+
+  test('does_not_enter_focus_mode_while_compile_is_open', async () => {
+    const wrapper = await mountWorkspace()
+    window.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'e', metaKey: true, shiftKey: true, cancelable: true,
+    }))
+    await flushPromises()
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"]')
+    const closeButton = dialog?.querySelector<HTMLElement>('button[aria-label="Close"]')
+    closeButton?.focus()
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'Enter', metaKey: true, shiftKey: true, bubbles: true, cancelable: true,
+    })
+    closeButton?.dispatchEvent(shortcut)
+    await flushPromises()
+
+    expect(shortcut.defaultPrevented).toBe(true)
+    expect(wrapper.get('.workspace-shell').classes()).not.toContain('is-focus-mode')
+    expect(dialog?.contains(document.activeElement)).toBe(true)
+  })
+
+  test('enters_focus_mode_with_the_workspace_shortcut', async () => {
+    const wrapper = await mountWorkspace()
+    const title = wrapper.get<HTMLInputElement>('[aria-label="Document title"]')
+    title.element.focus()
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+
+    title.element.dispatchEvent(shortcut)
+    await flushPromises()
+
+    expect(shortcut.defaultPrevented).toBe(true)
+    expect(wrapper.get('.workspace-shell').classes()).toContain('is-focus-mode')
+  })
+
+  test('keeps_focus_mode_unavailable_when_no_document_editor_is_open', async () => {
+    const wrapper = await mountWorkspace()
+    const folder = wrapper.get<HTMLElement>('[role="treeitem"][aria-label="Manuscript, folder"]')
+    await folder.trigger('click')
+    await flushPromises()
+    folder.element.focus()
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 'Enter', metaKey: true, shiftKey: true, bubbles: true, cancelable: true,
+    })
+    folder.element.dispatchEvent(shortcut)
+    await flushPromises()
+
+    expect(shortcut.defaultPrevented).toBe(true)
+    expect(wrapper.get('button[aria-label="Focus"]').attributes()).toHaveProperty('disabled')
+    expect(wrapper.get('.workspace-shell').classes()).not.toContain('is-focus-mode')
+    expect(folder.element).toBe(document.activeElement)
+  })
+
   test('shows_the_app_logo_immediately_before_the_back_button', async () => {
     const wrapper = await mountWorkspace()
     const header = wrapper.get('header[aria-label="Application toolbar"]')
