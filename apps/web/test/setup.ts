@@ -27,6 +27,14 @@ Object.defineProperty(window, 'matchMedia', {
 })
 Object.defineProperty(window, 'ResizeObserver', { configurable: true, value: ResizeObserverStub })
 Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, value: ResizeObserverStub })
+Object.defineProperty(Range.prototype, 'getClientRects', {
+  configurable: true,
+  value: () => [],
+})
+Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+  configurable: true,
+  value: () => new DOMRect(),
+})
 Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', {
   configurable: true,
   value: () => null,

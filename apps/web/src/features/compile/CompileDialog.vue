@@ -104,7 +104,7 @@ function submit(): void {
 </script>
 
 <template>
-  <Dialog :visible="visible" modal header="Compile" :draggable="false" class="pluma-dialog compile-dialog" @update:visible="!$event && emit('close')">
+  <Dialog :visible="visible" append-to="self" modal header="Compile" :draggable="false" class="pluma-dialog compile-dialog" @update:visible="!$event && emit('close')">
     <div v-if="dirty && !gateResolved" class="compile-dirty-gate">
       <p>Save changes before compiling?</p>
       <div>

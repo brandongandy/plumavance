@@ -30,6 +30,28 @@ test('remains_operable_at_200_percent_zoom', async ({ page }) => {
   await expect(page.getByLabel('Mobile panel switcher')).toBeVisible()
 })
 
+test('keeps_workspace_shortcut_tooltips_inside_a_narrow_viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 568 })
+  await createProject(page, 'Shortcut Tooltips')
+  await createDocument(page)
+  const primaryKey = await page.evaluate(() => /Mac|iPhone|iPad|iPod/.test(navigator.platform) ? 'Cmd' : 'Ctrl')
+
+  for (const [label, text] of [
+    ['Save document', `Save (${primaryKey}+S)`],
+    ['Compile', `Show Compile options (${primaryKey}+Shift+E)`],
+    ['Focus', `Enter Focus mode (${primaryKey}+Shift+Enter)`],
+  ] as const) {
+    await page.getByLabel(label, { exact: true }).hover()
+    const tooltip = page.getByRole('tooltip')
+    await expect(tooltip).toBeVisible()
+    await expect(tooltip).toHaveText(text)
+    const box = await tooltip.boundingBox()
+    expect(box, `${label} tooltip box`).not.toBeNull()
+    expect(box?.x, `${label} tooltip left edge`).toBeGreaterThanOrEqual(0)
+    expect((box?.x ?? 0) + (box?.width ?? 0), `${label} tooltip right edge`).toBeLessThanOrEqual(320)
+  }
+})
+
 test('supports_a_keyboard_writing_and_binder_journey', async ({ page }) => {
   await createProject(page, 'Keyboard Journey')
   await page.getByLabel('New document').focus()
@@ -38,10 +60,27 @@ test('supports_a_keyboard_writing_and_binder_journey', async ({ page }) => {
   await page.keyboard.type('Keyboard draft')
   await page.keyboard.press('ControlOrMeta+s')
   await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible()
+  await page.getByLabel('Save document').hover()
+  await expect(page.getByRole('tooltip')).toHaveText(/Save \((?:Cmd|Ctrl)\+S\)/)
+  await page.keyboard.press('ControlOrMeta+Shift+e')
+  const compileDialog = page.getByRole('dialog', { name: 'Compile', exact: true })
+  await expect(compileDialog).toBeVisible()
+  await expect(compileDialog.getByRole('button', { name: 'Close' })).toBeFocused()
+  await page.keyboard.press('ControlOrMeta+Shift+Enter')
+  await expect(page.locator('.workspace-shell')).not.toHaveClass(/is-focus-mode/)
+  expect(await compileDialog.evaluate((dialog) => dialog.contains(document.activeElement))).toBe(true)
+  await compileDialog.getByRole('button', { name: 'Close' }).click()
   const selected = page.locator('[role="treeitem"][aria-selected="true"]')
   await selected.focus()
   await page.keyboard.press('Home')
   await expect(page.locator('[role="treeitem"]:focus')).toBeVisible()
+  await page.keyboard.press('ControlOrMeta+Shift+Enter')
+  await expect(page.locator('.workspace-shell')).toHaveClass(/is-focus-mode/)
+  await expect(page.getByLabel('Document editor')).toBeFocused()
+  await page.keyboard.press('ControlOrMeta+Shift+e')
+  const focusDialog = page.getByRole('dialog', { name: 'Compile', exact: true })
+  await expect(focusDialog).toBeVisible()
+  expect(await focusDialog.evaluate((dialog) => !document.fullscreenElement || document.fullscreenElement.contains(dialog))).toBe(true)
 })
 
 test('typewriter_mode_centers_the_first_and_last_paragraphs', async ({ page }) => {
