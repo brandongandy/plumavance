@@ -86,6 +86,7 @@ function submitRename(): void {
       :aria-label="`Rename ${item.title}`"
       class="binder-rename-input"
       @click.stop
+      @keydown.stop
       @keydown.enter.stop.prevent="submitRename"
       @keydown.escape.stop.prevent="emit('cancelRename')"
       @blur="submitRename"
