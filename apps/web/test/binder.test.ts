@@ -108,6 +108,24 @@ describe('binder tree', () => {
     expect(wrapper.get(`[data-item-id="${notesId}"]`).text()).toContain('Research Notes')
   })
 
+  test('keeps_focus_in_the_rename_input_while_typing_a_title', async () => {
+    const { wrapper, store } = await mountTree()
+    const rename = vi.spyOn(store, 'renameItem').mockResolvedValue()
+
+    await wrapper.get(`[data-item-id="${chapterId}"]`).trigger('keydown', { key: 'F2' })
+    await flushPromises()
+    const input = wrapper.get('input[aria-label="Rename Chapter One"]')
+    ;(input.element as HTMLInputElement).focus()
+    expect(document.activeElement).toBe(input.element)
+
+    await input.setValue('Opening')
+    await input.trigger('keydown', { key: 'r' })
+    await flushPromises()
+
+    expect(wrapper.get('input[aria-label="Rename Chapter One"]').element).toBe(document.activeElement)
+    expect(rename).not.toHaveBeenCalled()
+  })
+
   test('maps_pointer_and_keyboard_moves_to_the_same_payload_shape', () => {
     expect(createMoveIntent(chapterId, null, 1)).toEqual({ itemId: chapterId, parentId: null, index: 1 })
     expect(createMoveIntent(chapterId, folderId, 0)).toEqual({
