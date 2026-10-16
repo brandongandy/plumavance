@@ -6,6 +6,31 @@
 
 Plumavance is a private, self-hosted writing workspace inspired by Scrivener. It combines multiple projects, a hierarchical binder, rich-text documents, notes, manual snapshots, PDF/RTF/Markdown export, and a fullscreen typewriter mode in a compact three-pane interface.
 
+# Screenshots
+
+On the homepage you view and manage your various projects.
+
+<p align="center">
+   <img src="assets/images/app-01.png"
+        alt="Plumavance homepage" />
+</p>
+
+In main view, you manage chapter folders, scenes, notes, snapshots, and sometimes, write.
+
+<p align="center">
+   <img src="assets/images/app-02.png"
+        alt="Plumavance main view" />
+</p>
+
+Focus mode stays centered on the active line.
+
+<p align="center">
+   <img src="assets/images/app-03.png"
+        alt="Plumavance focus view" />
+</p>
+
+# Setup and Development
+
 ## Setup with Docker
 
 1. Install Docker Engine or Docker Desktop with Docker Compose support.
