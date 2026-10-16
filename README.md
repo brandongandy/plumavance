@@ -32,8 +32,6 @@ Plumavance is a private, self-hosted writing workspace inspired by Scrivener. It
 
 Your projects are stored in the Docker volume named `pluma_pluma-data`. Running `docker compose down` does not delete this volume. Do not run `docker compose down --volumes` unless you intend to delete the stored application data.
 
-Upgrading an existing installation requires a one-time data move because the Compose service, volume, and database file have new identifiers. Before replacing the previous checkout, create a SQLite backup with that version's backup script and stop its stack. Restore the backup as `/data/pluma.sqlite` in the new `pluma_pluma-data` volume before using Plumavance; otherwise the renamed stack starts with an empty database.
-
 To use a different host port, set `PLUMA_PORT` when starting the application:
 
 ```sh
@@ -42,7 +40,7 @@ PLUMA_PORT=8080 docker compose up --build -d --wait
 
 Then open `http://localhost:8080`.
 
-Plumavance has no accounts, login screen, or application-level authentication. Run it only on a trusted private network, or place it behind an authenticated reverse proxy. Do not expose it directly to the public internet.
+Plumavance has no accounts, login screen, or authentication.
 
 ## Back up your data
 
