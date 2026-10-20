@@ -18,6 +18,7 @@ import SaveStatus from '../features/editor/SaveStatus.vue'
 import FocusExitButton from '../features/focus/FocusExitButton.vue'
 import { useFocusMode } from '../features/focus/useFocusMode.js'
 import InspectorPane from '../features/inspector/InspectorPane.vue'
+import SettingsDialog from '../features/settings/SettingsDialog.vue'
 import { useDocumentStore } from '../stores/document.js'
 import { useWorkspaceStore, type WorkspacePanel } from '../stores/workspace.js'
 import { useWritingProgressStore } from '../stores/writing-progress.js'
@@ -33,6 +34,8 @@ onBeforeRouteUpdate((to, from) => to.params.projectId === from.params.projectId 
 const compileTask = useCompile()
 const compileVisible = ref(false)
 const compileTrigger = ref<HTMLElement | null>(null)
+const settingsVisible = ref(false)
+const settingsTrigger = ref<HTMLElement | null>(null)
 const workspaceRoot = ref<HTMLElement | null>(null)
 const focusMode = useFocusMode(workspaceRoot)
 const layout = ref<WorkspaceLayout>(layoutForWidth(window.innerWidth))
@@ -76,6 +79,17 @@ function selectPanel(panel: WorkspacePanel): void {
 function openCompile(event: Event): void {
   compileTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
   compileVisible.value = true
+}
+
+function openSettings(event: Event): void {
+  settingsTrigger.value = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  settingsVisible.value = true
+}
+
+async function closeSettings(): Promise<void> {
+  settingsVisible.value = false
+  await nextTick()
+  settingsTrigger.value?.focus()
 }
 
 function openCompileFromKeyboard(): void {
@@ -188,6 +202,7 @@ onBeforeUnmount(() => {
       @save="saveDocument"
       @compile="openCompile"
       @focus="enterFocusMode"
+      @settings="openSettings"
     />
 
     <p v-if="store.loading" role="status" class="workspace-message">Opening project…</p>
@@ -260,6 +275,7 @@ onBeforeUnmount(() => {
       @save="saveDocument"
       @compile="runCompile"
     />
+    <SettingsDialog :visible="settingsVisible" @close="closeSettings" />
     <FocusExitButton v-if="focusMode.isActive.value" @exit="focusMode.exit" />
   </div>
 </template>

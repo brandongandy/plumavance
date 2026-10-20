@@ -13,7 +13,14 @@ defineProps<{
   saveDisabled: boolean
   focusDisabled: boolean
 }>()
-const emit = defineEmits<{ toggleBinder: []; toggleInspector: []; save: []; compile: [event: Event]; focus: [] }>()
+const emit = defineEmits<{
+  toggleBinder: []
+  toggleInspector: []
+  save: []
+  compile: [event: Event]
+  focus: []
+  settings: [event: Event]
+}>()
 const router = useRouter()
 provideTooltipGroup()
 </script>
@@ -38,7 +45,7 @@ provideTooltipGroup()
       aria-label="Show binder"
       tooltip="Show binder"
       :pressed="binderOpen"
-      class="workspace-icon-button"
+      class="workspace-icon-button workspace-panel-button"
       @click="emit('toggleBinder')"
     />
     <TooltipButton
@@ -71,12 +78,21 @@ provideTooltipGroup()
       @click="emit('focus')"
     />
     <TooltipButton
+      label="Settings"
+      icon="pi pi-cog"
+      aria-label="Settings"
+      tooltip="Settings"
+      placement="end"
+      class="workspace-toolbar-button"
+      @click="emit('settings', $event)"
+    />
+    <TooltipButton
       icon="pi pi-info-circle"
       aria-label="Show inspector"
       tooltip="Show inspector"
       :pressed="inspectorOpen"
       placement="end"
-      class="workspace-icon-button"
+      class="workspace-icon-button workspace-panel-button"
       @click="emit('toggleInspector')"
     />
   </header>

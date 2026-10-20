@@ -12,7 +12,9 @@ export async function createProject(page: Page, name: string): Promise<void> {
 export async function createDocument(page: Page): Promise<void> {
   const workspace = page.locator('[data-workspace]')
   await workspace.waitFor()
-  if ((await workspace.getAttribute('data-layout')) !== 'desktop') await page.getByLabel('Show binder').click()
+  const layout = await workspace.getAttribute('data-layout')
+  if (layout === 'phone') await page.getByLabel('Binder panel').click()
+  else if (layout === 'tablet') await page.getByLabel('Show binder').click()
   await page.getByLabel('New document').click()
   await page.getByLabel('Document editor').waitFor()
 }
