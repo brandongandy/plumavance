@@ -103,6 +103,10 @@ afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
   localStorage.clear()
+  delete document.documentElement.dataset.theme
+  delete document.documentElement.dataset.editorFont
+  document.documentElement.classList.remove('pluma-dark')
+  document.documentElement.style.removeProperty('color-scheme')
 })
 
 describe('workspace layout', () => {
@@ -115,6 +119,7 @@ describe('workspace layout', () => {
       ['Save document', 'Save (Cmd+S)'],
       ['Compile', 'Show Compile options (Cmd+Shift+E)'],
       ['Focus', 'Enter Focus mode (Cmd+Shift+Enter)'],
+      ['Settings', 'Settings'],
       ['Show inspector', 'Show inspector'],
     ] as const
 
@@ -126,6 +131,86 @@ describe('workspace layout', () => {
       button.element.parentElement?.dispatchEvent(new MouseEvent('mouseleave'))
       await nextTick()
     }
+  })
+
+  test('previews_cancels_and_persists_appearance_settings_from_a_modal', async () => {
+    const wrapper = await mountWorkspace()
+    const settingsButton = wrapper.get('button[aria-label="Settings"]')
+
+    await settingsButton.trigger('click')
+    expect(wrapper.get('[role="dialog"][aria-labelledby]').text()).toContain('Settings')
+
+    await wrapper.get('input[name="editor-font"][value="monospace"]').setValue(true)
+    await wrapper.get('input[name="theme"][value="terminal"]').setValue(true)
+    expect(document.documentElement.dataset.editorFont).toBe('monospace')
+    expect(document.documentElement.dataset.theme).toBe('terminal')
+    expect(localStorage.getItem('pluma.appearance.preferences')).toBeNull()
+
+    await wrapper.get('[role="dialog"] button[aria-label="Cancel settings changes"]').trigger('click')
+    expect(document.documentElement.dataset.editorFont).toBe('serif')
+    expect(document.documentElement.dataset.theme).toBe('helion-dark')
+    expect(document.activeElement).toBe(settingsButton.element)
+
+    await settingsButton.trigger('click')
+    await wrapper.get('input[name="editor-font"][value="sans-serif"]').setValue(true)
+    await wrapper.get('input[name="theme"][value="solarized-light"]').setValue(true)
+    await wrapper.get('[role="dialog"] button[aria-label="Save settings"]').trigger('click')
+
+    expect(JSON.parse(localStorage.getItem('pluma.appearance.preferences') ?? '{}')).toEqual({
+      editorFont: 'sans-serif',
+      theme: 'solarized-light',
+    })
+    expect(document.documentElement.classList.contains('pluma-dark')).toBe(false)
+    expect(document.activeElement).toBe(settingsButton.element)
+  })
+
+  test('loads_saved_appearance_settings_and_exposes_an_accessible_modal', async () => {
+    localStorage.setItem('pluma.appearance.preferences', JSON.stringify({
+      editorFont: 'monospace',
+      theme: 'terminal',
+    }))
+    const wrapper = await mountWorkspace()
+
+    expect(document.documentElement.dataset.editorFont).toBe('monospace')
+    expect(document.documentElement.dataset.theme).toBe('terminal')
+    expect(document.documentElement.classList.contains('pluma-dark')).toBe(true)
+
+    await wrapper.get('button[aria-label="Settings"]').trigger('click')
+    expect(wrapper.get<HTMLInputElement>('input[name="editor-font"][value="monospace"]').element.checked).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('input[name="theme"][value="terminal"]').element.checked).toBe(true)
+
+    const results = await axeCore.run(document.body, {
+      rules: { 'color-contrast': { enabled: false }, 'color-contrast-enhanced': { enabled: false } },
+    })
+    expect(results.violations).toEqual([])
+  })
+
+  test('keeps_the_modal_open_and_reports_when_appearance_settings_cannot_be_saved', async () => {
+    const nativeSetItem = Storage.prototype.setItem
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
+      if (key === 'pluma.appearance.preferences') throw new DOMException('Storage denied', 'QuotaExceededError')
+      nativeSetItem.call(this, key, value)
+    })
+    const wrapper = await mountWorkspace()
+
+    await wrapper.get('button[aria-label="Settings"]').trigger('click')
+    await wrapper.get('input[name="theme"][value="terminal"]').setValue(true)
+    await wrapper.get('[role="dialog"] button[aria-label="Save settings"]').trigger('click')
+
+    expect(wrapper.get('[role="dialog"] [role="alert"]').text()).toContain('could not be saved')
+    expect(document.documentElement.dataset.theme).toBe('terminal')
+    expect(localStorage.getItem('pluma.appearance.preferences')).toBeNull()
+  })
+
+  test('rolls_back_an_uncommitted_preview_when_the_workspace_unmounts', async () => {
+    const wrapper = await mountWorkspace()
+    await wrapper.get('button[aria-label="Settings"]').trigger('click')
+    await wrapper.get('input[name="theme"][value="terminal"]').setValue(true)
+    expect(document.documentElement.dataset.theme).toBe('terminal')
+
+    wrapper.unmount()
+
+    expect(document.documentElement.dataset.theme).toBe('helion-dark')
   })
 
   test('shows_only_the_hovered_tooltip_when_another_toolbar_action_has_focus', async () => {

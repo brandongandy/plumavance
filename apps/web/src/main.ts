@@ -29,5 +29,4 @@ app.use(PrimeVue, {
     },
   },
 })
-document.documentElement.classList.add('pluma-dark')
 app.mount('#app')

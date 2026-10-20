@@ -621,7 +621,7 @@ button {
 .document-prose {
   min-height: calc(100vh - 210px);
   color: var(--color-text-soft);
-  font-family: var(--font-prose);
+  font-family: var(--font-editor);
   font-size: 18px;
   line-height: 1.62;
   outline: none;
@@ -1094,6 +1094,12 @@ button {
 
   .document-scroll {
     padding: 20px 16px;
+  }
+}
+
+@media (max-width: 767px) {
+  .workspace-panel-button {
+    display: none;
   }
 }
 
