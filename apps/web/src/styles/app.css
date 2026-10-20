@@ -229,40 +229,6 @@ button {
   font-size: 12px;
 }
 
-.workspace-toolbar-action {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-.workspace-toolbar-tooltip {
-  position: absolute;
-  z-index: 40;
-  top: calc(100% + 4px);
-  left: 50%;
-  border: 1px solid var(--color-border);
-  border-radius: 2px;
-  background: var(--color-chrome);
-  padding: 6px 8px;
-  color: var(--color-text);
-  font-family: var(--font-code);
-  font-size: 11px;
-  line-height: 1;
-  pointer-events: none;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-
-.workspace-toolbar-action--compile .workspace-toolbar-tooltip {
-  left: calc(50% - 6px);
-}
-
-.workspace-toolbar-action--focus .workspace-toolbar-tooltip {
-  right: 0;
-  left: auto;
-  transform: none;
-}
-
 .workspace-icon-button {
   width: 32px;
   padding: 0;

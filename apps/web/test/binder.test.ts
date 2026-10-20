@@ -66,6 +66,25 @@ afterEach(() => {
 })
 
 describe('binder tree', () => {
+  test('shows_tooltips_for_every_binder_toolbar_button', async () => {
+    const { wrapper } = await mountTree()
+    const cases = [
+      ['New folder', 'New folder'],
+      ['New document', 'New document'],
+      ['Rename selected item', 'Rename selected item (F2)'],
+      ['Move selected item to Trash', 'Move selected item to Trash (Delete)'],
+    ] as const
+
+    for (const [buttonLabel, tooltip] of cases) {
+      const button = wrapper.get(`button[aria-label="${buttonLabel}"]`)
+      button.element.parentElement?.dispatchEvent(new MouseEvent('mouseenter'))
+      await wrapper.vm.$nextTick()
+      expect(wrapper.get('[role="tooltip"]').text()).toBe(tooltip)
+      button.element.parentElement?.dispatchEvent(new MouseEvent('mouseleave'))
+      await wrapper.vm.$nextTick()
+    }
+  })
+
   test('implements_arrow_home_end_enter_and_typeahead_tree_navigation', async () => {
     const { wrapper, store } = await mountTree()
     const chapter = wrapper.get(`[data-item-id="${chapterId}"]`)

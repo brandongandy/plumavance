@@ -54,10 +54,16 @@ watch(
 )
 
 function handleKeydown(event: KeyboardEvent): void {
-  if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === 's') {
-    event.preventDefault()
-    emit('save')
-  }
+  if (
+    event.defaultPrevented
+    || event.repeat
+    || event.shiftKey
+    || event.altKey
+    || (!event.metaKey && !event.ctrlKey)
+    || event.key.toLocaleLowerCase() !== 's'
+  ) return
+  event.preventDefault()
+  emit('save')
 }
 
 function handleKeyup(event: KeyboardEvent): void {
