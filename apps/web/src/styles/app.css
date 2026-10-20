@@ -723,7 +723,7 @@ button {
 }
 
 .snapshot-row strong,
-.snapshot-row span {
+.snapshot-metadata {
   display: block;
 }
 
@@ -734,7 +734,7 @@ button {
   white-space: nowrap;
 }
 
-.snapshot-row span {
+.snapshot-metadata {
   margin-top: 2px;
   color: var(--color-muted);
   font-family: var(--font-code);
