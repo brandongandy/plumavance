@@ -106,13 +106,16 @@ afterEach(() => {
 })
 
 describe('workspace layout', () => {
-  test('shows_mac_shortcuts_when_toolbar_actions_are_hovered', async () => {
+  test('shows_tooltips_for_every_application_toolbar_button', async () => {
     vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel')
     const wrapper = await mountWorkspace()
     const cases = [
+      ['Back to projects', 'Back to projects'],
+      ['Show binder', 'Show binder'],
       ['Save document', 'Save (Cmd+S)'],
       ['Compile', 'Show Compile options (Cmd+Shift+E)'],
       ['Focus', 'Enter Focus mode (Cmd+Shift+Enter)'],
+      ['Show inspector', 'Show inspector'],
     ] as const
 
     for (const [buttonLabel, tooltip] of cases) {
@@ -139,6 +142,151 @@ describe('workspace layout', () => {
     const tooltips = wrapper.findAll('[role="tooltip"]')
     expect(tooltips).toHaveLength(1)
     expect(tooltips[0]?.text()).toBe('Enter Focus mode (Cmd+Shift+Enter)')
+  })
+
+  test('shows_verified_mac_shortcuts_for_every_editor_toolbar_button', async () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel')
+    const wrapper = await mountWorkspace()
+    const cases = [
+      ['Undo', 'Undo (Cmd+Z)'],
+      ['Redo', 'Redo (Cmd+Shift+Z)'],
+      ['Paragraph', 'Paragraph (Cmd+Alt+0)'],
+      ['Heading 1', 'Heading 1 (Cmd+Alt+1)'],
+      ['Heading 2', 'Heading 2 (Cmd+Alt+2)'],
+      ['Bold', 'Bold (Cmd+B)'],
+      ['Italic', 'Italic (Cmd+I)'],
+      ['Underline', 'Underline (Cmd+U)'],
+      ['Strikethrough', 'Strikethrough (Cmd+Shift+S)'],
+      ['Bullet list', 'Bullet list (Cmd+Shift+8)'],
+      ['Numbered list', 'Numbered list (Cmd+Shift+7)'],
+      ['Indent', 'Indent (Tab)'],
+      ['Outdent', 'Outdent (Shift+Tab)'],
+      ['Block quote', 'Block quote (Cmd+Shift+B)'],
+      ['Horizontal rule', 'Horizontal rule'],
+    ] as const
+
+    for (const [buttonLabel, tooltip] of cases) {
+      const button = wrapper.get(`button[aria-label="${buttonLabel}"]`)
+      button.element.parentElement?.dispatchEvent(new MouseEvent('mouseenter'))
+      await nextTick()
+      expect(wrapper.get('[role="tooltip"]').text()).toBe(tooltip)
+      button.element.parentElement?.dispatchEvent(new MouseEvent('mouseleave'))
+      await nextTick()
+    }
+  })
+
+  test('uses_windows_and_linux_shortcut_labels_on_non_apple_platforms', async () => {
+    vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('Win32')
+    const wrapper = await mountWorkspace()
+    const cases = [
+      ['Save document', 'Save (Ctrl+S)'],
+      ['Redo', 'Redo (Ctrl+Y)'],
+      ['Bold', 'Bold (Ctrl+B)'],
+    ] as const
+
+    for (const [buttonLabel, tooltip] of cases) {
+      const button = wrapper.get(`button[aria-label="${buttonLabel}"]`)
+      button.element.parentElement?.dispatchEvent(new MouseEvent('mouseenter'))
+      await nextTick()
+      expect(wrapper.get('[role="tooltip"]').text()).toBe(tooltip)
+      button.element.parentElement?.dispatchEvent(new MouseEvent('mouseleave'))
+      await nextTick()
+    }
+  })
+
+  test('links_a_keyboard-focused_toolbar_button_to_its_tooltip', async () => {
+    const wrapper = await mountWorkspace()
+    const button = wrapper.get('button[aria-label="Show inspector"]')
+    button.element.focus()
+    await nextTick()
+
+    const tooltip = wrapper.get('[role="tooltip"]')
+    expect(tooltip.text()).toBe('Show inspector')
+    expect(button.attributes('aria-describedby')).toBe(tooltip.attributes('id'))
+  })
+
+  test('exposes_pressed_state_only_on_toggle_buttons', async () => {
+    const wrapper = await mountWorkspace()
+
+    expect(wrapper.get('button[aria-label="Show binder"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('button[aria-label="Show inspector"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.get('button[aria-label="Back to projects"]').attributes()).not.toHaveProperty('aria-pressed')
+    expect(wrapper.get('button[aria-label="Save document"]').attributes()).not.toHaveProperty('aria-pressed')
+  })
+
+  test('positions_editor_tooltips_in_the_viewport_outside_the_scrolling_toolbar', async () => {
+    const wrapper = await mountWorkspace()
+    const button = wrapper.get('button[aria-label="Bold"]')
+    vi.spyOn(button.element.parentElement as HTMLElement, 'getBoundingClientRect').mockReturnValue({
+      x: 100,
+      y: 48,
+      top: 48,
+      right: 129,
+      bottom: 77,
+      left: 100,
+      width: 29,
+      height: 29,
+      toJSON: () => ({}),
+    })
+
+    button.element.parentElement?.dispatchEvent(new MouseEvent('mouseenter'))
+    await flushPromises()
+
+    expect(wrapper.get('[role="tooltip"]').attributes('style')).toContain('top: 81px')
+    expect(wrapper.get('[role="tooltip"]').attributes('style')).toContain('left: 114.5px')
+  })
+
+  test('dismisses_a_focused_tooltip_when_its_button_becomes_disabled', async () => {
+    const wrapper = await mountWorkspace()
+    await wrapper.get('[aria-label="Document title"]').setValue('Dirty title')
+    const save = wrapper.get('button[aria-label="Save document"]')
+    save.element.focus()
+    await nextTick()
+    expect(wrapper.get('[role="tooltip"]').text()).toContain('Save')
+
+    await save.trigger('click')
+    await flushPromises()
+
+    expect(save.attributes()).toHaveProperty('disabled')
+    expect(wrapper.find('[role="tooltip"]').exists()).toBe(false)
+  })
+
+  test('dismisses_a_focused_tooltip_with_escape_without_moving_focus', async () => {
+    const wrapper = await mountWorkspace()
+    const button = wrapper.get('button[aria-label="Show inspector"]')
+    button.element.focus()
+    await nextTick()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('Show inspector')
+
+    await button.trigger('keydown', { key: 'Escape' })
+
+    expect(wrapper.find('[role="tooltip"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(button.element)
+  })
+
+  test('dismisses_a_hovered_tooltip_with_escape', async () => {
+    const wrapper = await mountWorkspace()
+    const button = wrapper.get('button[aria-label="Show inspector"]')
+    button.element.parentElement?.dispatchEvent(new MouseEvent('mouseenter'))
+    await nextTick()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('Show inspector')
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await nextTick()
+
+    expect(wrapper.find('[role="tooltip"]').exists()).toBe(false)
+  })
+
+  test('dismisses_an_action_tooltip_after_click', async () => {
+    const wrapper = await mountWorkspace()
+    const button = wrapper.get('button[aria-label="Show inspector"]')
+    button.element.parentElement?.dispatchEvent(new MouseEvent('mouseenter'))
+    await nextTick()
+    expect(wrapper.get('[role="tooltip"]').text()).toBe('Show inspector')
+
+    await button.trigger('click')
+
+    expect(wrapper.find('[role="tooltip"]').exists()).toBe(false)
   })
 
   test('saves_a_dirty_document_with_the_workspace_shortcut', async () => {
@@ -267,7 +415,7 @@ describe('workspace layout', () => {
 
     expect(logo.attributes()).toMatchObject({ alt: '', 'aria-hidden': 'true' })
     expect(logo.classes()).toEqual(expect.arrayContaining(['h-7', 'w-auto']))
-    expect(logo.element.nextElementSibling).toBe(backButton.element)
+    expect(logo.element.nextElementSibling?.contains(backButton.element)).toBe(true)
   })
 
   test('uses_the_scrivener_ordered_three_pane_frame_and_semantic_landmarks', async () => {

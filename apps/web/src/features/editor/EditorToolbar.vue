@@ -1,121 +1,127 @@
 <script setup lang="ts">
 import type { Editor } from '@tiptap/vue-3'
-import Button from 'primevue/button'
+
+import TooltipButton from '../../components/controls/TooltipButton.vue'
+import { provideTooltipGroup } from '../../components/controls/tooltipGroup.js'
+import { shortcutLabel } from '../../components/controls/shortcutLabels.js'
 
 defineProps<{ editor: Editor | null }>()
+provideTooltipGroup()
 </script>
 
 <template>
   <div v-if="editor" role="toolbar" aria-label="Text formatting" class="editor-toolbar">
-    <Button
+    <TooltipButton
       icon="pi pi-undo"
-      text
       aria-label="Undo"
+      :tooltip="`Undo (${shortcutLabel('Mod+Z')})`"
       :disabled="!editor.can().chain().focus().undo().run()"
+      placement="start"
       @click="editor.chain().focus().undo().run()"
     />
-    <Button
+    <TooltipButton
       icon="pi pi-redo"
-      text
       aria-label="Redo"
+      :tooltip="`Redo (${shortcutLabel('Mod+Shift+Z', 'Mod+Y')})`"
       :disabled="!editor.can().chain().focus().redo().run()"
       @click="editor.chain().focus().redo().run()"
     />
     <span aria-hidden="true" class="editor-toolbar-divider" />
-    <Button
+    <TooltipButton
       label="P"
-      text
       aria-label="Paragraph"
-      :aria-pressed="editor.isActive('paragraph')"
+      :tooltip="`Paragraph (${shortcutLabel('Mod+Alt+0')})`"
+      :pressed="editor.isActive('paragraph')"
       @click="editor.chain().focus().setParagraph().run()"
     />
-    <Button
+    <TooltipButton
       label="H1"
-      text
       aria-label="Heading 1"
-      :aria-pressed="editor.isActive('heading', { level: 1 })"
+      :tooltip="`Heading 1 (${shortcutLabel('Mod+Alt+1')})`"
+      :pressed="editor.isActive('heading', { level: 1 })"
       @click="editor.chain().focus().toggleHeading({ level: 1 }).run()"
     />
-    <Button
+    <TooltipButton
       label="H2"
-      text
       aria-label="Heading 2"
-      :aria-pressed="editor.isActive('heading', { level: 2 })"
+      :tooltip="`Heading 2 (${shortcutLabel('Mod+Alt+2')})`"
+      :pressed="editor.isActive('heading', { level: 2 })"
       @click="editor.chain().focus().toggleHeading({ level: 2 }).run()"
     />
     <span aria-hidden="true" class="editor-toolbar-divider" />
-    <Button
+    <TooltipButton
       label="B"
-      text
       aria-label="Bold"
-      :aria-pressed="editor.isActive('bold')"
+      :tooltip="`Bold (${shortcutLabel('Mod+B')})`"
+      :pressed="editor.isActive('bold')"
       class="font-bold"
       @click="editor.chain().focus().toggleBold().run()"
     />
-    <Button
+    <TooltipButton
       label="I"
-      text
       aria-label="Italic"
-      :aria-pressed="editor.isActive('italic')"
+      :tooltip="`Italic (${shortcutLabel('Mod+I')})`"
+      :pressed="editor.isActive('italic')"
       class="italic"
       @click="editor.chain().focus().toggleItalic().run()"
     />
-    <Button
+    <TooltipButton
       label="U"
-      text
       aria-label="Underline"
-      :aria-pressed="editor.isActive('underline')"
+      :tooltip="`Underline (${shortcutLabel('Mod+U')})`"
+      :pressed="editor.isActive('underline')"
       class="underline"
       @click="editor.chain().focus().toggleUnderline().run()"
     />
-    <Button
+    <TooltipButton
       label="S"
-      text
       aria-label="Strikethrough"
-      :aria-pressed="editor.isActive('strike')"
+      :tooltip="`Strikethrough (${shortcutLabel('Mod+Shift+S')})`"
+      :pressed="editor.isActive('strike')"
       class="line-through"
       @click="editor.chain().focus().toggleStrike().run()"
     />
     <span aria-hidden="true" class="editor-toolbar-divider" />
-    <Button
+    <TooltipButton
       icon="pi pi-list"
-      text
       aria-label="Bullet list"
-      :aria-pressed="editor.isActive('bulletList')"
+      :tooltip="`Bullet list (${shortcutLabel('Mod+Shift+8')})`"
+      :pressed="editor.isActive('bulletList')"
       @click="editor.chain().focus().toggleBulletList().run()"
     />
-    <Button
+    <TooltipButton
       icon="pi pi-list-check"
-      text
       aria-label="Numbered list"
-      :aria-pressed="editor.isActive('orderedList')"
+      :tooltip="`Numbered list (${shortcutLabel('Mod+Shift+7')})`"
+      :pressed="editor.isActive('orderedList')"
       @click="editor.chain().focus().toggleOrderedList().run()"
     />
-    <Button
+    <TooltipButton
       icon="pi pi-indent"
-      text
       aria-label="Indent"
+      tooltip="Indent (Tab)"
       :disabled="!editor.can().chain().focus().sinkListItem('listItem').run()"
       @click="editor.chain().focus().sinkListItem('listItem').run()"
     />
-    <Button
+    <TooltipButton
       icon="pi pi-outdent"
-      text
       aria-label="Outdent"
+      tooltip="Outdent (Shift+Tab)"
       :disabled="!editor.can().chain().focus().liftListItem('listItem').run()"
       @click="editor.chain().focus().liftListItem('listItem').run()"
     />
-    <Button
+    <TooltipButton
       icon="pi pi-block-quote"
-      text
       aria-label="Block quote"
-      :aria-pressed="editor.isActive('blockquote')"
+      :tooltip="`Block quote (${shortcutLabel('Mod+Shift+B')})`"
+      :pressed="editor.isActive('blockquote')"
       @click="editor.chain().focus().toggleBlockquote().run()"
     />
-    <Button
+    <TooltipButton
       label="—"
-      text
       aria-label="Horizontal rule"
+      tooltip="Horizontal rule"
+      placement="end"
       @click="editor.chain().focus().setHorizontalRule().run()"
     />
   </div>

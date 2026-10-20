@@ -30,7 +30,7 @@ test('remains_operable_at_200_percent_zoom', async ({ page }) => {
   await expect(page.getByLabel('Mobile panel switcher')).toBeVisible()
 })
 
-test('keeps_workspace_shortcut_tooltips_inside_a_narrow_viewport', async ({ page }) => {
+test('keeps_toolbar_tooltips_hoverable_and_inside_a_narrow_viewport', async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 568 })
   await createProject(page, 'Shortcut Tooltips')
   await createDocument(page)
@@ -50,6 +50,33 @@ test('keeps_workspace_shortcut_tooltips_inside_a_narrow_viewport', async ({ page
     expect(box?.x, `${label} tooltip left edge`).toBeGreaterThanOrEqual(0)
     expect((box?.x ?? 0) + (box?.width ?? 0), `${label} tooltip right edge`).toBeLessThanOrEqual(320)
   }
+
+  await page.getByLabel('Bold', { exact: true }).hover()
+  await expect(page.getByRole('tooltip')).toHaveText(`Bold (${primaryKey}+B)`)
+  await page.getByRole('tooltip').hover()
+  await expect(page.getByRole('tooltip')).toBeVisible()
+
+  await page.getByLabel('Binder panel').click()
+  await page.getByLabel('Rename selected item').hover()
+  await expect(page.getByRole('tooltip')).toHaveText('Rename selected item (F2)')
+  const binderTooltip = await page.getByRole('tooltip').boundingBox()
+  expect(binderTooltip?.x).toBeGreaterThanOrEqual(0)
+  expect((binderTooltip?.x ?? 0) + (binderTooltip?.width ?? 0)).toBeLessThanOrEqual(320)
+})
+
+test('repositions_a_focused_tooltip_when_the_viewport_changes', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 })
+  await createProject(page, 'Responsive Tooltip')
+  await createDocument(page)
+  await page.getByLabel('Bold', { exact: true }).focus()
+  await expect(page.getByRole('tooltip')).toBeVisible()
+
+  await page.setViewportSize({ width: 320, height: 568 })
+
+  await expect.poll(async () => {
+    const box = await page.getByRole('tooltip').boundingBox()
+    return (box?.x ?? 0) + (box?.width ?? 0)
+  }).toBeLessThanOrEqual(320)
 })
 
 test('supports_a_keyboard_writing_and_binder_journey', async ({ page }) => {

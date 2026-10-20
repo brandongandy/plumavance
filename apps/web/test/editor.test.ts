@@ -284,6 +284,23 @@ describe('document editor state', () => {
     expect(wrapper.emitted('save')).toHaveLength(1)
   })
 
+  test('reserves_the_modified_shift_s_shortcut_for_strikethrough', async () => {
+    const wrapper = mount(DocumentEditor, {
+      attachTo: document.body,
+      props: { modelValue: proseContent },
+      global: { plugins: [[PrimeVue, { unstyled: true }]] },
+    })
+    await flushPromises()
+
+    await wrapper.get('[contenteditable="true"][aria-label="Document editor"]').trigger('keydown', {
+      key: 's',
+      ctrlKey: true,
+      shiftKey: true,
+    })
+
+    expect(wrapper.emitted('save')).toBeUndefined()
+  })
+
   test('emits_signed_word_deltas_for_typing_and_deletion_but_not_formatting', async () => {
     const wrapper = mount(DocumentEditor, {
       attachTo: document.body,
