@@ -4,6 +4,7 @@ import Dialog from 'primevue/dialog'
 import { computed } from 'vue'
 
 import { buildSnapshotDiff } from './snapshotDiff.js'
+import { useSnapshotDialogStyle } from './useSnapshotDialogStyle.js'
 
 const props = defineProps<{
   visible: boolean
@@ -14,6 +15,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ close: [] }>()
 const parts = computed(() => buildSnapshotDiff(props.currentText, props.snapshotText))
+const dialogStyle = useSnapshotDialogStyle()
 </script>
 
 <template>
@@ -22,7 +24,9 @@ const parts = computed(() => buildSnapshotDiff(props.currentText, props.snapshot
     modal
     header="Compare Snapshot"
     :draggable="false"
-    class="pluma-dialog snapshot-dialog"
+    class="pluma-dialog snapshot-modal snapshot-dialog"
+    :style="dialogStyle"
+    :pt="{ mask: { class: 'snapshot-dialog-mask' } }"
     @update:visible="!$event && emit('close')"
   >
     <p v-if="loading" role="status">Loading snapshot…</p>

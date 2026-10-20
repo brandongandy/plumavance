@@ -3,6 +3,8 @@ import type { SnapshotDto } from '@pluma/shared'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 
+import { useSnapshotDialogStyle } from './useSnapshotDialogStyle.js'
+
 defineProps<{
   visible: boolean
   snapshot: SnapshotDto | null
@@ -10,6 +12,7 @@ defineProps<{
   error?: string
 }>()
 const emit = defineEmits<{ close: [] }>()
+const dialogStyle = useSnapshotDialogStyle()
 </script>
 
 <template>
@@ -18,7 +21,9 @@ const emit = defineEmits<{ close: [] }>()
     modal
     :header="snapshot?.name || 'Snapshot Preview'"
     :draggable="false"
-    class="pluma-dialog snapshot-dialog"
+    class="pluma-dialog snapshot-modal snapshot-dialog"
+    :style="dialogStyle"
+    :pt="{ mask: { class: 'snapshot-dialog-mask' } }"
     @update:visible="!$event && emit('close')"
   >
     <p v-if="loading" role="status">Loading snapshot…</p>

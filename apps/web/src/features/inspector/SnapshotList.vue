@@ -168,7 +168,8 @@ async function confirm(): Promise<void> {
       modal
       :header="confirmAction === 'restore' ? 'Restore Snapshot' : 'Delete Snapshot'"
       :draggable="false"
-      class="pluma-dialog"
+      class="pluma-dialog snapshot-modal"
+      :pt="{ mask: { class: 'snapshot-dialog-mask' } }"
       @update:visible="!$event && closeAll()"
     >
       <p v-if="confirmAction === 'restore'">Replace the saved document content with this snapshot? Title and notes will not change.</p>
