@@ -2,6 +2,12 @@
   <img src="apps/web/src/assets/plumavance-logo.svg" alt="Plumavance logo" width="220">
 </p>
 
+<p align="center">
+  <a href="https://github.com/brandongandy/plumavance/tags"><img src="https://img.shields.io/github/v/tag/brandongandy/plumavance?label=version&amp;sort=semver" alt="Current version"></a>
+  <a href="https://github.com/brandongandy/plumavance/commits/master"><img src="https://img.shields.io/github/last-commit/brandongandy/plumavance/master?label=last%20commit" alt="Last commit"></a>
+  <a href="https://github.com/brandongandy/plumavance/actions/workflows/publish-container.yml"><img src="https://github.com/brandongandy/plumavance/actions/workflows/publish-container.yml/badge.svg" alt="Container publish status"></a>
+</p>
+
 # Plumavance
 
 Plumavance is a private, self-hosted writing workspace inspired by Scrivener. It combines multiple projects, a hierarchical binder, rich-text documents, notes, manual snapshots, PDF/RTF/Markdown export, and a fullscreen typewriter mode in a compact three-pane interface.
