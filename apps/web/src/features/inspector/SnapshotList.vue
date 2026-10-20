@@ -4,12 +4,15 @@ import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import { nextTick, ref } from 'vue'
 
+import TooltipButton from '../../components/controls/TooltipButton.vue'
+import { provideTooltipGroup } from '../../components/controls/tooltipGroup.js'
 import { useDocumentStore } from '../../stores/document.js'
 import SnapshotCompareDialog from './SnapshotCompareDialog.vue'
 import SnapshotPreviewDialog from './SnapshotPreviewDialog.vue'
 import TakeSnapshotDialog from './TakeSnapshotDialog.vue'
 
 const store = useDocumentStore()
+provideTooltipGroup()
 const takeVisible = ref(false)
 const renameVisible = ref(false)
 const previewVisible = ref(false)
@@ -86,11 +89,12 @@ async function confirm(): Promise<void> {
 <template>
   <div class="snapshot-list">
     <div class="snapshot-list-toolbar">
-      <Button
+      <TooltipButton
         label="Take Snapshot"
         icon="pi pi-camera"
-        text
         aria-label="Take snapshot"
+        tooltip="Take snapshot"
+        placement="end"
         @click="remember($event); takeVisible = true"
       />
     </div>
@@ -101,11 +105,37 @@ async function confirm(): Promise<void> {
         <span class="snapshot-metadata">{{ new Date(snapshot.createdAt).toLocaleString() }} · {{ snapshot.wordCount }} words</span>
       </div>
       <div class="snapshot-actions">
-        <Button icon="pi pi-eye" text :aria-label="`Preview ${snapshot.name || 'snapshot'}`" @click="openDetail(snapshot, $event, 'preview')" />
-        <Button icon="pi pi-arrows-h" text :aria-label="`Compare ${snapshot.name || 'snapshot'}`" @click="openDetail(snapshot, $event, 'compare')" />
-        <Button icon="pi pi-pencil" text :aria-label="`Rename ${snapshot.name || 'snapshot'}`" @click="selectSnapshot(snapshot, $event); renameVisible = true" />
-        <Button icon="pi pi-replay" text :aria-label="`Restore ${snapshot.name || 'snapshot'}`" @click="selectSnapshot(snapshot, $event); confirmAction = 'restore'" />
-        <Button icon="pi pi-trash" text :aria-label="`Delete ${snapshot.name || 'snapshot'}`" @click="selectSnapshot(snapshot, $event); confirmAction = 'delete'" />
+        <TooltipButton
+          icon="pi pi-eye"
+          :aria-label="`Preview ${snapshot.name || 'snapshot'}`"
+          tooltip="Preview snapshot"
+          @click="openDetail(snapshot, $event, 'preview')"
+        />
+        <TooltipButton
+          icon="pi pi-arrows-h"
+          :aria-label="`Compare ${snapshot.name || 'snapshot'}`"
+          tooltip="Compare snapshot"
+          @click="openDetail(snapshot, $event, 'compare')"
+        />
+        <TooltipButton
+          icon="pi pi-pencil"
+          :aria-label="`Rename ${snapshot.name || 'snapshot'}`"
+          tooltip="Rename snapshot"
+          @click="selectSnapshot(snapshot, $event); renameVisible = true"
+        />
+        <TooltipButton
+          icon="pi pi-replay"
+          :aria-label="`Restore ${snapshot.name || 'snapshot'}`"
+          tooltip="Restore snapshot"
+          @click="selectSnapshot(snapshot, $event); confirmAction = 'restore'"
+        />
+        <TooltipButton
+          icon="pi pi-trash"
+          :aria-label="`Delete ${snapshot.name || 'snapshot'}`"
+          tooltip="Delete snapshot"
+          placement="end"
+          @click="selectSnapshot(snapshot, $event); confirmAction = 'delete'"
+        />
       </div>
     </article>
 
