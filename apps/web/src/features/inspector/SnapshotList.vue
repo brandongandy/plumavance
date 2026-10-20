@@ -98,7 +98,7 @@ async function confirm(): Promise<void> {
     <article v-for="snapshot in store.snapshots" :key="snapshot.id" class="snapshot-row">
       <div class="min-w-0">
         <strong>{{ snapshot.name || 'Untitled snapshot' }}</strong>
-        <span>{{ new Date(snapshot.createdAt).toLocaleString() }} · {{ snapshot.wordCount }} words</span>
+        <span class="snapshot-metadata">{{ new Date(snapshot.createdAt).toLocaleString() }} · {{ snapshot.wordCount }} words</span>
       </div>
       <div class="snapshot-actions">
         <Button icon="pi pi-eye" text :aria-label="`Preview ${snapshot.name || 'snapshot'}`" @click="openDetail(snapshot, $event, 'preview')" />
