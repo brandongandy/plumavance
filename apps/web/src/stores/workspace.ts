@@ -51,6 +51,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const trashedItems = ref<BinderItemDto[]>([])
   const searchResults = ref<SearchResultDto[]>([])
   const activeItemId = ref<string | null>(null)
+  const openDocumentIds = ref<string[]>([])
+  const activeTabId = ref<string | null>(null)
   const binderOpen = ref(preferences.binderOpen)
   const inspectorOpen = ref(preferences.inspectorOpen)
   const binderWidth = ref(preferences.binderWidth)
@@ -62,6 +64,65 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   let loadSequence = 0
 
   const activeItem = computed(() => items.value.find((item) => item.id === activeItemId.value) ?? null)
+  const openDocuments = computed(() => openDocumentIds.value.flatMap((id) => {
+    const item = items.value.find((candidate) => candidate.id === id && candidate.kind === 'document')
+    return item ? [{ id: item.id, title: item.title }] : []
+  }))
+
+  function isDocument(id: string): boolean {
+    return items.value.some((item) => item.id === id && item.kind === 'document')
+  }
+
+  function activateTab(id: string): void {
+    if (!openDocumentIds.value.includes(id) || !isDocument(id)) return
+    activeTabId.value = id
+    activeItemId.value = id
+    activePanel.value = 'editor'
+  }
+
+  function replaceActiveDocument(id: string): void {
+    if (!isDocument(id)) return
+    if (openDocumentIds.value.includes(id)) {
+      activateTab(id)
+      return
+    }
+    const index = activeTabId.value ? openDocumentIds.value.indexOf(activeTabId.value) : -1
+    if (index >= 0) {
+      openDocumentIds.value = openDocumentIds.value.map((documentId, candidateIndex) =>
+        candidateIndex === index ? id : documentId,
+      )
+    } else {
+      openDocumentIds.value = [...openDocumentIds.value, id]
+    }
+    activeTabId.value = id
+    activeItemId.value = id
+    activePanel.value = 'editor'
+  }
+
+  function openDocumentInNewTab(id: string): void {
+    if (!isDocument(id)) return
+    if (!openDocumentIds.value.includes(id)) openDocumentIds.value = [...openDocumentIds.value, id]
+    activateTab(id)
+  }
+
+  function closeDocumentTab(id: string): void {
+    const index = openDocumentIds.value.indexOf(id)
+    if (index < 0) return
+    const wasActive = activeTabId.value === id
+    openDocumentIds.value = openDocumentIds.value.filter((documentId) => documentId !== id)
+    if (!wasActive) return
+    const nextId = openDocumentIds.value[Math.min(index, openDocumentIds.value.length - 1)] ?? null
+    activeTabId.value = nextId
+    if (activeItemId.value === id) activeItemId.value = nextId
+  }
+
+  function closeOtherDocumentTabs(id: string): void {
+    if (!openDocumentIds.value.includes(id)) return
+    openDocumentIds.value = [id]
+    activeTabId.value = id
+    activeItemId.value = id
+    activePanel.value = 'editor'
+  }
 
   watch(
     [binderOpen, inspectorOpen, binderWidth, inspectorWidth],
@@ -81,13 +142,17 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function load(id: string): Promise<void> {
     const sequence = ++loadSequence
-    if (projectId.value !== id) {
+    const projectChanged = projectId.value !== id
+    const initializeTabs = projectChanged || project.value?.id !== id
+    if (projectChanged) {
       project.value = null
       items.value = []
       trashedItems.value = []
       searchResults.value = []
       searchSequence += 1
       activeItemId.value = null
+      openDocumentIds.value = []
+      activeTabId.value = null
       useDocumentStore().clear()
     }
     projectId.value = id
@@ -105,7 +170,18 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       project.value = detail.project
       items.value = detail.items
       trashedItems.value = detail.trashedItems
-      activeItemId.value = detail.items.find((item) => item.kind === 'document')?.id ?? detail.items[0]?.id ?? null
+      const availableDocumentIds = new Set(detail.items.filter((item) => item.kind === 'document').map((item) => item.id))
+      openDocumentIds.value = openDocumentIds.value.filter((documentId) => availableDocumentIds.has(documentId))
+      const firstDocumentId = detail.items.find((item) => item.kind === 'document')?.id ?? null
+      if (initializeTabs) {
+        openDocumentIds.value = firstDocumentId ? [firstDocumentId] : []
+        activeTabId.value = firstDocumentId
+      } else if (!activeTabId.value || !openDocumentIds.value.includes(activeTabId.value)) {
+        activeTabId.value = openDocumentIds.value[0] ?? null
+      }
+      activeItemId.value = activeItemId.value && detail.items.some((item) => item.id === activeItemId.value)
+        ? activeItemId.value
+        : activeTabId.value ?? (initializeTabs ? detail.items[0]?.id ?? null : null)
       activePanel.value = 'editor'
     } catch (error) {
       if (isCurrent()) errorMessage.value = errorText(error, 'The project could not be opened.')
@@ -122,7 +198,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       parentId: created.parentId,
       index: created.position,
     })
-    activeItemId.value = created.id
+    if (created.kind === 'document') replaceActiveDocument(created.id)
+    else activeItemId.value = created.id
     await useWritingProgressStore().refresh()
   }
 
@@ -184,9 +261,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         }
       }
     }
+    const activeIndex = activeTabId.value ? openDocumentIds.value.indexOf(activeTabId.value) : -1
+    const activeTabRemoved = activeTabId.value ? descendantIds.has(activeTabId.value) : false
+    const activeItemRemoved = descendantIds.has(activeItemId.value ?? '')
+    openDocumentIds.value = openDocumentIds.value.filter((documentId) => !descendantIds.has(documentId))
+    if (activeTabRemoved) {
+      activeTabId.value = openDocumentIds.value[Math.min(activeIndex, openDocumentIds.value.length - 1)] ?? null
+    }
     items.value = items.value.filter((item) => !descendantIds.has(item.id))
     trashedItems.value = [trashed, ...trashedItems.value]
-    if (descendantIds.has(activeItemId.value ?? '')) activeItemId.value = items.value[0]?.id ?? null
+    if (activeItemRemoved) activeItemId.value = activeTabId.value ?? items.value[0]?.id ?? null
     await useWritingProgressStore().refresh()
   }
 
@@ -198,9 +282,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     project.value = detail.project
     items.value = detail.items
     trashedItems.value = detail.trashedItems
-    activeItemId.value = selected && detail.items.some((item) => item.id === selected)
-      ? selected
-      : detail.items.find((item) => item.kind === 'document')?.id ?? detail.items[0]?.id ?? null
+    activeItemId.value = selected && detail.items.some((item) => item.id === selected) ? selected : null
     await useWritingProgressStore().refresh()
   }
 
@@ -242,6 +324,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     searchResults,
     activeItemId,
     activeItem,
+    openDocumentIds,
+    openDocuments,
+    activeTabId,
     binderOpen,
     inspectorOpen,
     binderWidth,
@@ -257,6 +342,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     restoreItem,
     deleteItem,
     search,
+    activateTab,
+    replaceActiveDocument,
+    openDocumentInNewTab,
+    closeDocumentTab,
+    closeOtherDocumentTabs,
     setBinderWidth,
     setInspectorWidth,
   }

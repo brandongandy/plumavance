@@ -71,9 +71,16 @@ async function focusItem(id: string): Promise<void> {
 
 function selectItem(item: BinderItemDto): void {
   if (store.activeItemId !== item.id && !unsavedGuard.canTransition()) return
-  store.activeItemId = item.id
+  if (item.kind === 'document') store.replaceActiveDocument(item.id)
+  else store.activeItemId = item.id
   focusedId.value = item.id
   store.activePanel = 'editor'
+}
+
+function openNewTab(item: BinderItemDto): void {
+  if (store.activeItemId !== item.id && !unsavedGuard.canTransition()) return
+  store.openDocumentInNewTab(item.id)
+  focusedId.value = item.id
 }
 
 function toggle(item: BinderItemDto, expand?: boolean): void {
@@ -276,6 +283,7 @@ async function restore(itemId: string): Promise<void> {
         @drag-leave="dropTarget = null"
         @drop="handleDrop"
         @toggle="toggle"
+        @open-new-tab="openNewTab"
       />
 
       <div class="binder-trash">

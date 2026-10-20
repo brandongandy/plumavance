@@ -17,6 +17,7 @@ const projectId = '11111111-1111-4111-8111-111111111111'
 const folderId = '22222222-2222-4222-8222-222222222222'
 const chapterId = '33333333-3333-4333-8333-333333333333'
 const notesId = '44444444-4444-4444-8444-444444444444'
+const appendixId = '55555555-5555-4555-8555-555555555555'
 
 const stamp = '2026-10-10T00:00:00.000Z'
 const item = (
@@ -42,6 +43,7 @@ const originalItems = [
   item(chapterId, 'Chapter One', 'document', folderId, 0),
   item(notesId, 'Research Notes', 'document', null, 1),
 ]
+const wrappers: VueWrapper[] = []
 
 async function mountTree(canTransition = () => true): Promise<{ wrapper: VueWrapper; store: ReturnType<typeof useWorkspaceStore> }> {
   const pinia = createPinia()
@@ -55,11 +57,13 @@ async function mountTree(canTransition = () => true): Promise<{ wrapper: VueWrap
       provide: { [UnsavedGuardKey as symbol]: { canTransition, runGuarded: (action: () => unknown) => canTransition() ? action() : undefined } },
     },
   })
+  wrappers.push(wrapper)
   await flushPromises()
   return { wrapper, store }
 }
 
 afterEach(() => {
+  wrappers.splice(0).forEach((wrapper) => wrapper.unmount())
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
@@ -127,6 +131,33 @@ describe('binder tree', () => {
     expect(wrapper.get(`[data-item-id="${notesId}"]`).text()).toContain('Research Notes')
   })
 
+  test('opens_a_document_in_a_new_tab_from_its_row_action', async () => {
+    // Catches the row action selecting/replacing the current tab or appearing on folders.
+    const { wrapper, store } = await mountTree()
+    store.$patch({ openDocumentIds: [chapterId], activeTabId: chapterId })
+
+    expect(wrapper.find('button[aria-label="Open Manuscript in new tab"]').exists()).toBe(false)
+    await wrapper.get('button[aria-label="Open Research Notes in new tab"]').trigger('click')
+
+    expect(store.openDocumentIds).toEqual([chapterId, notesId])
+    expect(store.activeTabId).toBe(notesId)
+    expect(store.activeItemId).toBe(notesId)
+  })
+
+  test('keyboard_activation_of_the_new_tab_action_does_not_select_the_row_first', async () => {
+    // Catches Enter bubbling to the treeitem and replacing the active tab before the button click.
+    const canTransition = vi.fn(() => true)
+    const { wrapper, store } = await mountTree(canTransition)
+    store.$patch({ openDocumentIds: [chapterId], activeTabId: chapterId })
+    const button = wrapper.get('button[aria-label="Open Research Notes in new tab"]')
+
+    await button.trigger('keydown', { key: 'Enter' })
+    await button.trigger('click')
+
+    expect(store.openDocumentIds).toEqual([chapterId, notesId])
+    expect(canTransition).toHaveBeenCalledOnce()
+  })
+
   test('keeps_focus_in_the_rename_input_while_typing_a_title', async () => {
     const { wrapper, store } = await mountTree()
     const rename = vi.spyOn(store, 'renameItem').mockResolvedValue()
@@ -188,6 +219,62 @@ describe('binder tree', () => {
     await wrapper.get(`button[aria-label="Confirm delete Research Notes"]`).trigger('click')
     expect(store.restoreItem).toHaveBeenCalledWith(notesId)
     expect(store.deleteItem).toHaveBeenCalledWith(notesId)
+  })
+
+  test('trashing_the_active_document_selects_the_nearest_remaining_tab', async () => {
+    // Catches trash reconciliation selecting the first Binder item instead of the right-hand tab.
+    setActivePinia(createPinia())
+    const store = useWorkspaceStore()
+    const appendix = item(appendixId, 'Appendix', 'document', null, 2)
+    store.$patch({
+      projectId,
+      items: [...structuredClone(originalItems), appendix],
+      activeItemId: notesId,
+      openDocumentIds: [chapterId, notesId, appendixId],
+      activeTabId: notesId,
+    })
+    vi.spyOn(binderApi, 'trash').mockResolvedValue({ ...originalItems[2]!, trashedAt: stamp })
+
+    await store.trashItem(notesId)
+
+    expect(store.openDocumentIds).toEqual([chapterId, appendixId])
+    expect(store.activeTabId).toBe(appendixId)
+    expect(store.activeItemId).toBe(appendixId)
+  })
+
+  test('restoring_an_item_does_not_reopen_a_document_after_the_last_tab_was_closed', async () => {
+    // Catches restore selecting a document that has no corresponding open tab.
+    setActivePinia(createPinia())
+    const store = useWorkspaceStore()
+    store.$patch({
+      projectId,
+      items: [originalItems[0]!],
+      trashedItems: [{ ...originalItems[2]!, trashedAt: stamp }],
+      activeItemId: null,
+      openDocumentIds: [],
+      activeTabId: null,
+    })
+    vi.spyOn(binderApi, 'restore').mockResolvedValue(originalItems[2]!)
+    vi.spyOn(binderApi, 'getProject').mockResolvedValue({
+      project: {
+        id: projectId,
+        name: 'Draft',
+        createdAt: stamp,
+        updatedAt: stamp,
+        lastOpenedAt: stamp,
+        projectWordTarget: null,
+        dailyWordTarget: null,
+        dailyCountMode: 'additions',
+      },
+      items: structuredClone(originalItems),
+      trashedItems: [],
+    })
+
+    await store.restoreItem(notesId)
+
+    expect(store.openDocumentIds).toEqual([])
+    expect(store.activeTabId).toBeNull()
+    expect(store.activeItemId).toBeNull()
   })
 
   test('does_not_restore_trash_when_the_unsaved_guard_declines', async () => {

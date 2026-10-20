@@ -15,6 +15,7 @@ import { useWorkspaceStore } from '../src/stores/workspace.js'
 const projectId = '11111111-1111-4111-8111-111111111111'
 const nextProjectId = '44444444-4444-4444-8444-444444444444'
 const nextDocumentId = '66666666-6666-4666-8666-666666666666'
+const researchDocumentId = '77777777-7777-4777-8777-777777777777'
 
 function projectResponse(id = projectId): Response {
   return Response.json({
@@ -83,6 +84,36 @@ async function mountWorkspace(width = 1280, handler?: (url: URL, init?: RequestI
   return wrapper
 }
 
+function researchDocumentResponse(): Response {
+  return Response.json({
+    id: researchDocumentId,
+    projectId,
+    title: 'Research Notes',
+    notesText: '',
+    revision: 0,
+    savedAt: '2026-10-10T00:00:00.000Z',
+    contentText: 'Research prose',
+    contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Research prose' }] }] },
+  })
+}
+
+async function mountWorkspaceWithTwoDocuments(
+  loadResearch: () => Response | Promise<Response> = researchDocumentResponse,
+): Promise<VueWrapper> {
+  const detail = await projectResponse().json()
+  detail.items.push({
+    ...detail.items[1],
+    id: researchDocumentId,
+    title: 'Research Notes',
+    position: 1,
+  })
+  return mountWorkspace(1280, (url) => {
+    if (url.pathname === `/api/projects/${projectId}`) return Response.json(detail)
+    if (url.pathname === `/api/documents/${researchDocumentId}`) return loadResearch()
+    return workspaceResponse(url)
+  })
+}
+
 function workspaceResponse(url: URL): Response {
   if (url.pathname.endsWith('/writing-progress')) return Response.json({
     projectWordTarget: null, dailyWordTarget: null, dailyCountMode: 'additions',
@@ -110,6 +141,136 @@ afterEach(() => {
 })
 
 describe('workspace layout', () => {
+  test('replaces_the_active_tab_on_a_normal_binder_document_click', async () => {
+    // Catches ordinary Binder navigation accumulating tabs instead of reusing the active one.
+    const wrapper = await mountWorkspaceWithTwoDocuments()
+
+    expect(wrapper.get('[role="group"][aria-label="Open documents"]').findAll('[data-editor-tab]')).toHaveLength(1)
+    await wrapper.get(`[data-item-id="${researchDocumentId}"]`).trigger('click')
+    await flushPromises()
+
+    const tabs = wrapper.get('[role="group"][aria-label="Open documents"]').findAll('[data-editor-tab]')
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0]?.text()).toContain('Research Notes')
+    expect(useDocumentStore().documentId).toBe(researchDocumentId)
+  })
+
+  test('opens_switches_and_closes_document_tabs', async () => {
+    // Catches the Binder + action replacing a tab, duplicating an open document, or choosing no close neighbor.
+    const wrapper = await mountWorkspaceWithTwoDocuments()
+    await wrapper.get(`button[aria-label="Open Research Notes in new tab"]`).trigger('click')
+    await wrapper.get(`button[aria-label="Open Research Notes in new tab"]`).trigger('click')
+    await flushPromises()
+
+    const tablist = wrapper.get('[role="group"][aria-label="Open documents"]')
+    expect(tablist.findAll('[data-editor-tab]')).toHaveLength(2)
+    expect(tablist.get('button[aria-pressed="true"]').text()).toContain('Research Notes')
+
+    await tablist.get('button[aria-label="Chapter One"]',).trigger('click')
+    await flushPromises()
+    expect(useDocumentStore().documentId).toBe('33333333-3333-4333-8333-333333333333')
+
+    const chapterClose = tablist.get('button[aria-label="Close Chapter One"]')
+    ;(chapterClose.element as HTMLButtonElement).focus()
+    await chapterClose.trigger('click')
+    await flushPromises()
+    expect(tablist.findAll('[data-editor-tab]')).toHaveLength(1)
+    expect(tablist.get('button[aria-pressed="true"]').text()).toContain('Research Notes')
+    expect(document.activeElement).toBe(tablist.get('button[aria-label="Research Notes"]').element)
+    expect(useDocumentStore().documentId).toBe(researchDocumentId)
+
+    await tablist.get('button[aria-label="Close Research Notes"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="group"][aria-label="Open documents"]').exists()).toBe(false)
+    expect(useDocumentStore().documentId).toBeNull()
+  })
+
+  test('alt_clicking_a_tab_close_button_closes_every_other_tab', async () => {
+    // Catches modifier-click closing its own tab or leaving another tab open.
+    const wrapper = await mountWorkspaceWithTwoDocuments()
+    await wrapper.get(`button[aria-label="Open Research Notes in new tab"]`).trigger('click')
+    await flushPromises()
+
+    await wrapper.get('button[aria-label="Close Chapter One"]').trigger('click', { altKey: true })
+    await flushPromises()
+
+    const tabs = wrapper.get('[role="group"][aria-label="Open documents"]').findAll('[data-editor-tab]')
+    expect(tabs).toHaveLength(1)
+    expect(tabs[0]?.text()).toContain('Chapter One')
+    expect(useDocumentStore().documentId).toBe('33333333-3333-4333-8333-333333333333')
+  })
+
+  test('keeps_tabs_and_the_dirty_buffer_when_a_tab_transition_is_declined', async () => {
+    // Catches tab activation discarding active edits when the unsaved guard declines.
+    const wrapper = await mountWorkspaceWithTwoDocuments()
+    await wrapper.get(`button[aria-label="Open Research Notes in new tab"]`).trigger('click')
+    await flushPromises()
+    await wrapper.get('[aria-label="Document title"]').setValue('Unsorted research')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    await wrapper.get('button[aria-label="Chapter One"]').trigger('click')
+    await flushPromises()
+
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(useDocumentStore().documentId).toBe(researchDocumentId)
+    expect(useDocumentStore().title).toBe('Unsorted research')
+    expect(wrapper.get('[role="group"][aria-label="Open documents"]').findAll('[data-editor-tab]')).toHaveLength(2)
+  })
+
+  test('shows_and_retries_a_failed_tab_document_load', async () => {
+    // Catches a selected tab rendering a blank editor with no visible recovery action.
+    let fail = true
+    const wrapper = await mountWorkspaceWithTwoDocuments(() => fail
+      ? Response.json({ message: 'Research unavailable' }, { status: 503 })
+      : researchDocumentResponse())
+
+    await wrapper.get('button[aria-label="Open Research Notes in new tab"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Research unavailable')
+
+    fail = false
+    await wrapper.get('[role="alert"] button').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[aria-label="Document title"]').element).toHaveProperty('value', 'Research Notes')
+  })
+
+  test('disables_outgoing_document_actions_while_another_tab_is_loading', async () => {
+    // Catches Inspector or save actions mutating the outgoing buffer during an accepted tab transition.
+    let resolveResearch!: (response: Response) => void
+    const research = new Promise<Response>((resolve) => { resolveResearch = resolve })
+    const wrapper = await mountWorkspaceWithTwoDocuments(() => research)
+    await wrapper.get('[aria-label="Document title"]').setValue('Unsaved opening')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    await wrapper.get('button[aria-label="Open Research Notes in new tab"]').trigger('click')
+    await nextTick()
+
+    expect(wrapper.find('textarea[aria-label="Document notes"]').exists()).toBe(false)
+    expect(wrapper.get('button[aria-label="Save document"]').attributes()).toHaveProperty('disabled')
+    await wrapper.get('button[aria-label="Compile"]').trigger('click')
+    expect(wrapper.find('button[aria-label="Save before compile"]').exists()).toBe(false)
+
+    resolveResearch(researchDocumentResponse())
+    await flushPromises()
+    expect(wrapper.get('textarea[aria-label="Document notes"]').attributes('disabled')).toBeUndefined()
+  })
+
+  test('preserves_an_empty_editor_during_a_same_project_refresh', async () => {
+    // Catches a refresh reopening the first document after the writer closed the last tab.
+    const wrapper = await mountWorkspace()
+    await wrapper.get('button[aria-label="Close Chapter One"]').trigger('click')
+    await flushPromises()
+
+    const workspace = useWorkspaceStore()
+    await workspace.load(projectId)
+    await flushPromises()
+
+    expect(workspace.openDocumentIds).toEqual([])
+    expect(workspace.activeTabId).toBeNull()
+    expect(workspace.activeItemId).toBeNull()
+    expect(wrapper.text()).toContain('Select or create a document.')
+  })
+
   test('shows_tooltips_for_every_application_toolbar_button', async () => {
     vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel')
     const wrapper = await mountWorkspace()
@@ -564,6 +725,28 @@ describe('workspace layout', () => {
     const contents = wrapper.get('[aria-label="Contents of Manuscript"]')
     expect(contents.text()).toContain('Chapter One')
     expect(contents.text()).not.toContain('No items')
+  })
+
+  test('opens_a_child_folder_from_folder_contents', async () => {
+    // Catches folder-content navigation sending folder IDs through document-only tab replacement.
+    const wrapper = await mountWorkspace()
+    const workspace = useWorkspaceStore()
+    workspace.items = [...workspace.items, {
+      ...workspace.items[0]!,
+      id: '88888888-8888-4888-8888-888888888888',
+      parentId: '22222222-2222-4222-8222-222222222222',
+      title: 'Part One',
+      position: 1,
+    }]
+    await nextTick()
+    await wrapper.get('[role="treeitem"][aria-label="Manuscript, folder"]').trigger('click')
+    const part = wrapper.get('[aria-label="Contents of Manuscript"]').findAll('button')
+      .find((button) => button.text().includes('Part One'))
+
+    await part?.trigger('click')
+
+    expect(workspace.activeItemId).toBe('88888888-8888-4888-8888-888888888888')
+    expect(wrapper.get('[aria-label="Contents of Part One"]')).toBeTruthy()
   })
 
   test('loads progress, overlays unsaved prose, records editor activity, and refreshes after a successful save', async () => {
