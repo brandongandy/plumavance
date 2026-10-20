@@ -14,6 +14,7 @@ import CompileDialog from '../features/compile/CompileDialog.vue'
 import { useCompile } from '../features/compile/useCompile.js'
 import DocumentEditor from '../features/editor/DocumentEditor.vue'
 import DocumentHeader from '../features/editor/DocumentHeader.vue'
+import EditorTabs from '../features/editor/EditorTabs.vue'
 import SaveStatus from '../features/editor/SaveStatus.vue'
 import FocusExitButton from '../features/focus/FocusExitButton.vue'
 import { useFocusMode } from '../features/focus/useFocusMode.js'
@@ -39,7 +40,12 @@ const settingsTrigger = ref<HTMLElement | null>(null)
 const workspaceRoot = ref<HTMLElement | null>(null)
 const focusMode = useFocusMode(workspaceRoot)
 const layout = ref<WorkspaceLayout>(layoutForWidth(window.innerWidth))
-const canSave = computed(() => Boolean(documentStore.documentId) && documentStore.saveState !== 'saving' && documentStore.isDirty)
+const activeDocumentReady = computed(() =>
+  store.activeItem?.kind === 'document'
+  && documentStore.documentId === store.activeItem.id
+  && !documentStore.loading,
+)
+const canSave = computed(() => activeDocumentReady.value && documentStore.saveState !== 'saving' && documentStore.isDirty)
 
 const folderChildren = computed(() => {
   const active = store.activeItem
@@ -142,10 +148,27 @@ async function runCompile(request: CompileRequest): Promise<void> {
 
 async function openFolderItem(itemId: string): Promise<void> {
   if (itemId !== store.activeItemId && !unsavedGuard.canTransition()) return
-  store.activeItemId = itemId
+  const item = store.items.find((candidate) => candidate.id === itemId)
+  if (item?.kind === 'document') store.replaceActiveDocument(item.id)
+  else if (item) store.activeItemId = item.id
+}
+
+function activateTab(itemId: string): void {
+  if (itemId !== store.activeItemId && !unsavedGuard.canTransition()) return
+  store.activateTab(itemId)
+}
+
+function closeTab(itemId: string, closeOthers: boolean): void {
+  const changesActiveDocument = closeOthers
+    ? store.activeItemId !== itemId
+    : store.activeTabId === itemId && store.activeItemId === itemId
+  if (changesActiveDocument && !unsavedGuard.canTransition()) return
+  if (closeOthers) store.closeOtherDocumentTabs(itemId)
+  else store.closeDocumentTab(itemId)
 }
 
 async function saveDocument(): Promise<void> {
+  if (!activeDocumentReady.value) return
   if (!(await documentStore.save()) || !documentStore.documentId) return
   store.items = store.items.map((item) =>
     item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
@@ -165,6 +188,11 @@ async function reloadServerCopy(): Promise<void> {
     item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
   )
   await writingProgress.refresh()
+}
+
+async function retryDocumentLoad(): Promise<void> {
+  const item = store.activeItem
+  if (item?.kind === 'document') await documentStore.load(item.id, () => true, true)
 }
 
 watch(
@@ -196,7 +224,7 @@ onBeforeUnmount(() => {
       :binder-open="layout === 'desktop' ? store.binderOpen : store.activePanel === 'binder'"
       :inspector-open="layout === 'desktop' ? store.inspectorOpen : store.activePanel === 'inspector'"
       :save-disabled="!canSave"
-      :focus-disabled="!documentStore.documentId"
+      :focus-disabled="!activeDocumentReady"
       @toggle-binder="toggleBinder"
       @toggle-inspector="toggleInspector"
       @save="saveDocument"
@@ -216,39 +244,52 @@ onBeforeUnmount(() => {
       </template>
       <template #editor>
         <main id="main-content" class="workspace-main">
-          <FolderContents
-            v-if="store.activeItem?.kind === 'folder'"
-            :folder="store.activeItem"
-            :items="folderChildren"
-            @open="openFolderItem($event.id)"
+          <EditorTabs
+            v-if="store.openDocuments.length"
+            :tabs="store.openDocuments"
+            :active-id="store.activeItem?.kind === 'document' ? store.activeTabId : null"
+            @activate="activateTab"
+            @close="closeTab"
           />
-          <div v-else-if="store.activeItem?.kind === 'document'" class="editor-document-pane">
-            <p v-if="documentStore.loading" role="status" class="workspace-message">Opening document…</p>
-            <template v-else-if="documentStore.documentId === store.activeItem.id">
-              <DocumentHeader :model-value="documentStore.title" @update:model-value="documentStore.setTitle" />
-              <SaveStatus
-                :state="documentStore.saveState"
-                :message="documentStore.errorMessage"
-                @retry="saveDocument"
-                @reload="reloadServerCopy"
-                @keep-mine="keepMine"
-              />
-              <DocumentEditor
-                :model-value="documentStore.contentJson"
-                :focus-mode="focusMode.isActive.value"
-                @update:model-value="documentStore.setContent"
-                @save="saveDocument"
-                @word-count-delta="writingProgress.recordEditorDelta"
-              />
-            </template>
+          <div class="workspace-main-content">
+            <FolderContents
+              v-if="store.activeItem?.kind === 'folder'"
+              :folder="store.activeItem"
+              :items="folderChildren"
+              @open="openFolderItem($event.id)"
+            />
+            <div v-else-if="store.activeItem?.kind === 'document'" class="editor-document-pane">
+              <p v-if="documentStore.loading" role="status" class="workspace-message">Opening document…</p>
+              <template v-else-if="documentStore.documentId === store.activeItem.id">
+                <DocumentHeader :model-value="documentStore.title" @update:model-value="documentStore.setTitle" />
+                <SaveStatus
+                  :state="documentStore.saveState"
+                  :message="documentStore.errorMessage"
+                  @retry="saveDocument"
+                  @reload="reloadServerCopy"
+                  @keep-mine="keepMine"
+                />
+                <DocumentEditor
+                  :model-value="documentStore.contentJson"
+                  :focus-mode="focusMode.isActive.value"
+                  @update:model-value="documentStore.setContent"
+                  @save="saveDocument"
+                  @word-count-delta="writingProgress.recordEditorDelta"
+                />
+              </template>
+              <div v-else role="alert" class="workspace-message">
+                <span>{{ documentStore.errorMessage || 'The document could not be opened.' }}</span>
+                <button type="button" @click="retryDocumentLoad">Retry</button>
+              </div>
+            </div>
+            <p v-else class="workspace-empty">Select or create a document.</p>
           </div>
-          <p v-else class="workspace-empty">Select or create a document.</p>
         </main>
       </template>
       <template #inspector>
         <InspectorPane
           :notes="documentStore.notesText"
-          :has-document="Boolean(documentStore.documentId)"
+          :has-document="activeDocumentReady"
           @update:notes="documentStore.setNotes"
         />
       </template>
@@ -268,7 +309,7 @@ onBeforeUnmount(() => {
     />
     <CompileDialog
       :visible="compileVisible"
-      :dirty="documentStore.isDirty"
+      :dirty="activeDocumentReady && documentStore.isDirty"
       :busy="compileTask.compiling.value"
       :error="compileTask.error.value"
       @close="closeCompile"

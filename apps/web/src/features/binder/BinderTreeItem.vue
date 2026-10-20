@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { BinderItemDto } from '@pluma/shared'
+import Button from 'primevue/button'
 import { nextTick, ref, watch } from 'vue'
 
 const props = defineProps<{
@@ -23,6 +24,7 @@ const emit = defineEmits<{
   dragLeave: [item: BinderItemDto]
   drop: [event: DragEvent, item: BinderItemDto]
   toggle: [item: BinderItemDto]
+  openNewTab: [item: BinderItemDto]
 }>()
 
 const title = ref(props.item.title)
@@ -91,6 +93,16 @@ function submitRename(): void {
       @keydown.escape.stop.prevent="emit('cancelRename')"
       @blur="submitRename"
     />
-    <span v-else class="truncate">{{ item.title }}</span>
+    <span v-else class="min-w-0 flex-1 truncate">{{ item.title }}</span>
+    <Button
+      v-if="item.kind === 'document' && !editing"
+      icon="pi pi-plus"
+      text
+      class="binder-new-tab-button"
+      :aria-label="`Open ${item.title} in new tab`"
+      @keydown.enter.stop
+      @keydown.space.stop
+      @click.stop="emit('openNewTab', item)"
+    />
   </div>
 </template>
