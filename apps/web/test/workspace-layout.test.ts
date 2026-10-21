@@ -589,6 +589,62 @@ describe('workspace layout', () => {
     expect(useWorkspaceStore().activeTabId).toBe(chapterId)
   })
 
+  test.each([
+    ['create', false], ['trash', false], ['trash', true],
+  ] as const)('pending_save_baseline_change_invalidates_%s_approval_discard_%s', async (action, discard) => {
+    // Saved A → save B pending → revert to clean A → approve action → B saved makes A dirty.
+    // Catches approval snapshots that compare only the unchanged editable buffer.
+    const wrapper = await mountWorkspace()
+    const workspace = useWorkspaceStore()
+    const documents = useDocumentStore()
+    const session = documents.sessionFor(chapterId)!
+    const originalItem = { ...workspace.items.find((item) => item.id === chapterId)! }
+    let finishSave!: () => void
+    let finishAction!: () => void
+    vi.spyOn(documentApi, 'save').mockImplementation((id, payload) => new Promise((resolve) => {
+      finishSave = () => resolve({ id, projectId, ...payload, contentText: 'Saved prose', revision: 1, savedAt: '2026-10-21T00:00:00.000Z' })
+    }))
+    if (action === 'create') {
+      vi.spyOn(binderApi, 'create').mockImplementation(() => new Promise((resolve) => {
+        finishAction = () => resolve({ ...originalItem, id: nextDocumentId, title: 'New chapter', position: 1 })
+      }))
+    } else {
+      vi.spyOn(binderApi, 'trash').mockImplementation(() => new Promise((resolve) => {
+        finishAction = () => resolve({ ...originalItem, title: 'Pending saved title', trashedAt: '2026-10-21T00:00:00.000Z' })
+      }))
+    }
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(discard)
+    await wrapper.get('[aria-label="Document title"]').setValue('Pending saved title')
+    await wrapper.get('[aria-label="Save document"]').trigger('click')
+    await wrapper.get('[aria-label="Document title"]').setValue('Chapter One')
+    expect(session.isDirty).toBe(false)
+    await wrapper.get(action === 'create' ? '[aria-label="New document"]' : '[aria-label="Move selected item to Trash"]').trigger('click')
+    expect(confirm).not.toHaveBeenCalled()
+    finishSave()
+    await flushPromises()
+    expect(session.title).toBe('Chapter One')
+    expect(session.savedBuffer?.title).toBe('Pending saved title')
+    expect(session.isDirty).toBe(true)
+    finishAction()
+    await flushPromises()
+    if (action === 'create') {
+      expect(confirm).not.toHaveBeenCalled()
+      expect(workspace.openDocumentIds).toEqual([chapterId, nextDocumentId])
+      expect(workspace.activeTabId).toBe(chapterId)
+      expect(documents.sessionFor(chapterId)).toBe(session)
+    } else {
+      expect(confirm).toHaveBeenCalledOnce()
+      expect(workspace.openDocumentIds).toEqual([])
+      expect(workspace.items.some((item) => item.id === chapterId)).toBe(false)
+      if (discard) expect(documents.sessionFor(chapterId)).toBeUndefined()
+      else {
+        expect(documents.sessionFor(chapterId)).toBe(session)
+        expect(session.isDirty).toBe(true)
+        expect(wrapper.get('[data-trash-recovery]').text()).toContain('Restore')
+      }
+    }
+  })
+
   test('replaces_the_active_tab_on_a_normal_binder_document_click', async () => {
     // Catches ordinary Binder navigation accumulating tabs instead of reusing the active one.
     const wrapper = await mountWorkspaceWithTwoDocuments()
