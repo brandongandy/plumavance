@@ -10,13 +10,11 @@ defineProps<{
   projectName: string
   binderOpen: boolean
   inspectorOpen: boolean
-  saveDisabled: boolean
   focusDisabled: boolean
 }>()
 const emit = defineEmits<{
   toggleBinder: []
   toggleInspector: []
-  save: []
   compile: [event: Event]
   focus: []
   settings: [event: Event]
@@ -47,15 +45,6 @@ provideTooltipGroup()
       :pressed="binderOpen"
       class="workspace-icon-button workspace-panel-button"
       @click="emit('toggleBinder')"
-    />
-    <TooltipButton
-      label="Save"
-      icon="pi pi-save"
-      aria-label="Save document"
-      :tooltip="`Save (${shortcutLabel('Mod+S')})`"
-      :disabled="saveDisabled"
-      class="workspace-toolbar-button"
-      @click="emit('save')"
     />
     <TooltipButton
       label="Compile"

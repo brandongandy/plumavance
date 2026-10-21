@@ -10,7 +10,6 @@ import { computed, inject, onBeforeUnmount, watch } from 'vue'
 import { useDocumentStore } from '../../stores/document.js'
 import DocumentEditor from './DocumentEditor.vue'
 import DocumentHeader from './DocumentHeader.vue'
-import SaveStatus from './SaveStatus.vue'
 
 const props = defineProps<{ documentId: string; focused: boolean; focusMode?: boolean }>()
 const emit = defineEmits<{
@@ -65,21 +64,18 @@ function notifySaved(id: string): void {
     <p v-if="session?.loading" role="status" class="workspace-message">Opening document…</p>
     <template v-else-if="session?.savedBuffer">
       <DocumentHeader :model-value="session.title" @update:model-value="documents.setTitle(documentId, $event)" />
-      <SaveStatus
-        :state="session.saveState"
-        :message="session.errorMessage"
-        @retry="saveDocument"
-        @reload="reloadServerCopy"
-        @keep-mine="keepMine"
-      />
       <DocumentEditor
         :model-value="session.contentJson"
         :aria-label="`${session.title} document editor`"
         :focus-mode="focusMode"
         :scroll-top="session.scrollTop"
+        :save-state="session.saveState"
+        :save-message="session.errorMessage"
         @update:model-value="documents.setContent(documentId, $event)"
         @update:scroll-top="documents.setScrollTop(documentId, $event)"
         @save="saveDocument"
+        @reload="reloadServerCopy"
+        @keep-mine="keepMine"
         @word-count-delta="emit('wordCountDelta', $event)"
       />
     </template>

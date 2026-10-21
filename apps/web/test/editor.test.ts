@@ -428,13 +428,41 @@ describe('document editor state', () => {
     })
     await flushPromises()
 
-    expect(wrapper.get('[role="toolbar"][aria-label="Text formatting"]')).toBeTruthy()
+    expect(wrapper.get('[role="toolbar"][aria-label="Document toolbar"]')).toBeTruthy()
     expect(wrapper.get('button[aria-label="Indent"] .pi-indent')).toBeTruthy()
     expect(wrapper.get('button[aria-label="Outdent"] .pi-outdent')).toBeTruthy()
     expect(wrapper.get('button[aria-label="Block quote"] .pi-block-quote')).toBeTruthy()
     expect(wrapper.get('[contenteditable="true"][aria-label="Document editor"]')).toBeTruthy()
     await wrapper.get('[data-document-editor]').trigger('keydown', { key: 's', ctrlKey: true })
     expect(wrapper.emitted('save')).toHaveLength(1)
+  })
+
+  test('places_the_save_control_in_the_document_toolbar_and_disables_it_when_saved', async () => {
+    const wrapper = mount(DocumentEditor, {
+      attachTo: document.body,
+      props: { modelValue: proseContent, saveState: 'saved' },
+      global: { plugins: [[PrimeVue, { unstyled: true }]] },
+    })
+    await flushPromises()
+
+    const toolbar = wrapper.get('[role="toolbar"][aria-label="Document toolbar"]')
+    expect(toolbar.get('[role="status"]').text()).toContain('Saved')
+    expect(toolbar.get('button[aria-label="Save document"]').attributes()).toHaveProperty('disabled')
+    expect(toolbar.element.firstElementChild).toBe(toolbar.get('.save-status').element)
+    expect(toolbar.get('.editor-formatting-controls').get('button[aria-label="Bold"]')).toBeTruthy()
+    expect(toolbar.get('.editor-formatting-controls').find('.save-status').exists()).toBe(false)
+    expect(wrapper.find('.document-editor > .save-status').exists()).toBe(false)
+
+    await wrapper.setProps({ saveState: 'unsaved' })
+    const save = toolbar.get('button[aria-label="Save document"]')
+    expect(save.attributes()).not.toHaveProperty('disabled')
+    await save.trigger('click')
+    expect(wrapper.emitted('save')).toHaveLength(1)
+
+    for (const state of ['saving', 'conflict'] as const) {
+      await wrapper.setProps({ saveState: state })
+      expect(toolbar.get('button[aria-label="Save document"]').attributes()).toHaveProperty('disabled')
+    }
   })
 
   test('reserves_the_modified_shift_s_shortcut_for_strikethrough', async () => {

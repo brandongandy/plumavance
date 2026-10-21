@@ -417,7 +417,8 @@ describe('workspace layout', () => {
     editable.get('p').element.textContent = 'One two three four'
     await editable.trigger('input')
     await flushPromises()
-    expect(wrapper.get('footer').text()).toContain('Unsaved')
+    expect(chapter.get('.editor-toolbar [role="status"]').text()).toContain('Unsaved')
+    expect(wrapper.get('footer').text()).not.toContain('Unsaved')
     expect(wrapper.get('footer').text()).toContain('4 words')
     const progress = wrapper.get('[aria-label="Writing progress settings"]')
     await progress.trigger('mouseenter')
@@ -430,9 +431,9 @@ describe('workspace layout', () => {
     expect(wrapper.get('footer').text()).toContain('Research Notes')
     expect(wrapper.get('footer').text()).toContain('2 words')
     expect(document.querySelector('[aria-label="Save before compile"]')).toBeNull()
-    expect(wrapper.get('[aria-label="Save document"]').attributes()).toHaveProperty('disabled')
+    expect(wrapper.get(`[data-document-pane="${researchDocumentId}"] [aria-label="Save document"]`).attributes()).toHaveProperty('disabled')
     await chapter.get('[aria-label="Document title"]').trigger('focusin')
-    await wrapper.get('[aria-label="Save document"]').trigger('click')
+    await chapter.get('[aria-label="Save document"]').trigger('click')
     await flushPromises()
     const puts = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'PUT')
     expect(puts).toHaveLength(1)
@@ -1030,7 +1031,7 @@ describe('workspace layout', () => {
     await nextTick()
 
     expect(wrapper.find('textarea[aria-label="Document notes"]').exists()).toBe(false)
-    expect(wrapper.get('button[aria-label="Save document"]').attributes()).toHaveProperty('disabled')
+    expect(wrapper.find('button[aria-label="Save document"]').exists()).toBe(false)
     await wrapper.get('button[aria-label="Compile"]').trigger('click')
     expect(wrapper.find('button[aria-label="Save before compile"]').exists()).toBe(false)
 
@@ -1061,7 +1062,6 @@ describe('workspace layout', () => {
     const cases = [
       ['Back to projects', 'Back to projects'],
       ['Show binder', 'Show binder'],
-      ['Save document', 'Save (Cmd+S)'],
       ['Compile', 'Show Compile options (Cmd+Shift+E)'],
       ['Focus', 'Enter Focus mode (Cmd+Shift+Enter)'],
       ['Settings', 'Settings'],
@@ -1178,6 +1178,7 @@ describe('workspace layout', () => {
     vi.spyOn(window.navigator, 'platform', 'get').mockReturnValue('MacIntel')
     const wrapper = await mountWorkspace()
     const cases = [
+      ['Save document', 'Save (Cmd+S)'],
       ['Undo', 'Undo (Cmd+Z)'],
       ['Redo', 'Redo (Cmd+Shift+Z)'],
       ['Paragraph', 'Paragraph (Cmd+Alt+0)'],
