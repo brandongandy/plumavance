@@ -31,7 +31,7 @@ test('previews_cancels_and_persists_editor_appearance', async ({ page }) => {
 
   await expect(page.locator('html')).toHaveAttribute('data-editor-font', 'sans-serif')
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'solarized-light')
-  expect(await page.getByLabel('Document editor').evaluate((element) => getComputedStyle(element).fontFamily)).toContain('IBM Plex Sans')
+  expect(await page.getByLabel(/document editor$/i).evaluate((element) => getComputedStyle(element).fontFamily)).toContain('IBM Plex Sans')
   await settingsButton.click()
   await expect(dialog.locator('input[name="editor-font"][value="sans-serif"]')).toBeChecked()
   await expect(dialog.locator('input[name="theme"][value="solarized-light"]')).toBeChecked()

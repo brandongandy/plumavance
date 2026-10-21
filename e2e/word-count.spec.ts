@@ -44,11 +44,11 @@ test('reconciles authoritative native progress after a stale cross-tab baseline 
     lost()
   })
   try {
-    await page.getByLabel('Document editor').fill('one two three four five')
+    await page.getByLabel(/document editor$/i).fill('one two three four five')
     await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
     await expect(page.getByRole('dialog', { name: 'Writing progress' }).getByRole('status')).toHaveText('Synced')
     await page.keyboard.press('Escape')
-    await other.getByLabel('Document editor').fill('six seven eight')
+    await other.getByLabel(/document editor$/i).fill('six seven eight')
     await acknowledgmentLost
     failProgress = false
     await other.reload()
@@ -83,11 +83,11 @@ test('retries retained native activity after one recoverable IndexedDB put failu
   page.on('request', (request) => {
     if (request.url().endsWith('/word-count-events')) deltas.push(request.postDataJSON().delta)
   })
-  await page.getByLabel('Document editor').fill('one two three four five')
+  await page.getByLabel(/document editor$/i).fill('one two three four five')
   await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Writing progress' }).getByRole('alert')).toContainText('saved locally')
   await page.keyboard.press('Escape')
-  await page.getByLabel('Document editor').fill('one two three four five six seven eight')
+  await page.getByLabel(/document editor$/i).fill('one two three four five six seven eight')
   await expect.poll(() => deltas.length).toBeGreaterThan(0)
   expect(deltas).toEqual([8])
   await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
@@ -125,7 +125,7 @@ test('clears native persistence failure after immediate flush retries the still-
   page.on('request', (request) => {
     if (request.url().endsWith('/word-count-events')) deltas.push(request.postDataJSON().delta)
   })
-  await page.getByLabel('Document editor').fill('one two three four five')
+  await page.getByLabel(/document editor$/i).fill('one two three four five')
   await expect.poll(() => deltas).toEqual([5])
   await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Writing progress' })
@@ -139,7 +139,7 @@ test('uses native transactions to retain five plus three words across tabs and d
   await createDocument(page)
   const other = await context.newPage()
   await other.goto(page.url())
-  await other.getByLabel('Document editor').waitFor()
+  await other.getByLabel(/document editor$/i).waitFor()
   let release!: () => void
   let accepted!: () => void
   const held = new Promise<void>((resolve) => { release = resolve })
@@ -157,9 +157,9 @@ test('uses native transactions to retain five plus three words across tabs and d
     await route.fulfill({ response })
   })
   try {
-    await page.getByLabel('Document editor').fill('one two three four five')
+    await page.getByLabel(/document editor$/i).fill('one two three four five')
     await firstAccepted
-    await other.getByLabel('Document editor').fill('six seven eight')
+    await other.getByLabel(/document editor$/i).fill('six seven eight')
     const date = await page.evaluate(() => {
       const now = new Date()
       return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
@@ -195,7 +195,7 @@ test('retains a single daily count through lost acknowledgment, reload and faile
     await route.abort('failed')
     firstLost()
   })
-  await page.getByLabel('Document editor').fill('one two three four five')
+  await page.getByLabel(/document editor$/i).fill('one two three four five')
   await lost
   await page.reload()
   await expect.poll(() => requests).toBeGreaterThan(1)
@@ -213,7 +213,7 @@ test('retains a single daily count through lost acknowledgment, reload and faile
 test('tracks live writing, optional targets and modes, resets Edit Mode, and reconciles folder trash and restore', async ({ page }) => {
   await createProject(page, 'Word Count Journey')
   await createDocument(page)
-  const editor = page.getByLabel('Document editor')
+  const editor = page.getByLabel(/document editor$/i)
   await page.getByRole('button', { name: 'Writing progress settings', exact: true }).click()
   await expect(page.getByLabel('Project word target', { exact: true })).toHaveValue('')
   await expect(page.getByLabel('Daily word target', { exact: true })).toHaveValue('')
@@ -264,7 +264,7 @@ test('tracks live writing, optional targets and modes, resets Edit Mode, and rec
 test('shrinks the progress bar while retaining document counts on narrow workspaces', async ({ page }) => {
   await createProject(page, 'Compact Word Counts')
   await createDocument(page)
-  await page.getByLabel('Document editor').fill('one two three')
+  await page.getByLabel(/document editor$/i).fill('one two three')
   const footer = page.locator('footer')
   const progress = footer.locator('.writing-progress-track')
   const desktopWidth = (await progress.boundingBox())!.width
@@ -287,7 +287,7 @@ test('counts only selected saved bodies for direct documents and folders through
   await createProject(page, 'Compile Word Counts')
   await createDocument(page)
   await page.getByLabel('Document title').fill('Opening title excluded')
-  await page.getByLabel('Document editor').fill('one two')
+  await page.getByLabel(/document editor$/i).fill('one two')
   await page.getByLabel('Save document').click()
   await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible()
   await page.getByLabel('New folder').click()
@@ -296,7 +296,7 @@ test('counts only selected saved bodies for direct documents and folders through
   await folder.getByRole('textbox').press('Enter')
   await createDocument(page)
   await page.getByLabel('Document title').fill('Nested title excluded')
-  await page.getByLabel('Document editor').fill('three four five')
+  await page.getByLabel(/document editor$/i).fill('three four five')
   await page.getByLabel('Save document').click()
   await expect(page.getByText('Saved', { exact: true }).first()).toBeVisible()
 
@@ -316,7 +316,7 @@ test('counts only selected saved bodies for direct documents and folders through
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog).toBeHidden()
 
-  await page.getByLabel('Document editor').fill('three four five six seven')
+  await page.getByLabel(/document editor$/i).fill('three four five six seven')
   await page.getByRole('button', { name: 'Compile', exact: true }).click()
   await dialog.getByLabel('Compile saved copy').click()
   await dialog.getByRole('checkbox', { name: 'Chapter title excluded', exact: true }).check()
