@@ -193,6 +193,45 @@ describe('snapshot inspector', () => {
     wrapper.unmount()
   })
 
+  test('preserves_edits_made_during_snapshot_restoration_and_updates_the_saved_baseline', async () => {
+    setActivePinia(createPinia())
+    let resolveRestore: ((document: DocumentDto) => void) | undefined
+    vi.spyOn(documentApi, 'get').mockResolvedValue(documentFixture())
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([snapshotSummaryFixture])
+    vi.spyOn(snapshotApi, 'restore').mockImplementation(() => new Promise((resolve) => { resolveRestore = resolve }))
+    const store = useDocumentStore()
+    await store.load(documentId)
+    await flushPromises()
+
+    const restoring = store.restoreSnapshot(documentId, snapshotId)
+    store.setTitle(documentId, 'Title written during restore')
+    store.setContent(documentId, content('New writing during restore'))
+    store.setNotes(documentId, 'Notes written during restore')
+    resolveRestore?.({
+      ...documentFixture('Earlier prose', 3),
+      title: 'Restored title',
+      notesText: 'Restored notes',
+      savedAt: '2026-10-10T00:05:00.000Z',
+    })
+
+    expect(await restoring).toBe(true)
+    const session = store.sessionFor(documentId)!
+    expect(session.title).toBe('Title written during restore')
+    expect(session.contentText).toBe('New writing during restore')
+    expect(session.notesText).toBe('Notes written during restore')
+    expect(session.revision).toBe(3)
+    expect(session.savedAt).toBe('2026-10-10T00:05:00.000Z')
+    expect(session.savedWordCount).toBe(2)
+    expect(session.counts.words).toBe(4)
+    expect(session.saveState).toBe('unsaved')
+    expect(session.isDirty).toBe(true)
+
+    store.setTitle(documentId, 'Restored title')
+    store.setContent(documentId, content('Earlier prose'))
+    store.setNotes(documentId, 'Restored notes')
+    expect(session.isDirty).toBe(false)
+  })
+
   test('accepts_snapshot_summaries_without_content_bodies', async () => {
     const { wrapper, store } = await mountedInspector()
 

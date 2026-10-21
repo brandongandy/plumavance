@@ -126,10 +126,12 @@ export const useDocumentStore = defineStore('document', () => {
     return sessionFor(session.documentId) === session && requests.get(session)?.generation === generation
   }
 
-  function applyServerDocument(session: DocumentSession, document: DocumentDto): void {
-    session.title = document.title
-    session.contentJson = document.contentJson
-    session.notesText = document.notesText
+  function applyServerDocument(session: DocumentSession, document: DocumentDto, replaceBuffer = true): void {
+    if (replaceBuffer) {
+      session.title = document.title
+      session.contentJson = document.contentJson
+      session.notesText = document.notesText
+    }
     session.revision = document.revision
     session.savedAt = document.savedAt
     session.savedBuffer = bufferOf(document)
@@ -290,7 +292,7 @@ export const useDocumentStore = defineStore('document', () => {
       const restored = await snapshotApi.restore(snapshotId, session.revision)
       if (!isCurrent(session, generation) || state.write !== sequence || restored.id !== id) return false
       useWritingProgressStore().accountSavedBody(restored.projectId, session.savedWordCount, countText(editorText(restored.contentJson)).words)
-      applyServerDocument(session, restored)
+      applyServerDocument(session, restored, !session.isDirty)
       return true
     } catch (error) {
       if (isCurrent(session, generation) && state.write === sequence) {
