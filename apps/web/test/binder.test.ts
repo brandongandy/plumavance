@@ -210,7 +210,7 @@ describe('binder tree', () => {
     await notes.trigger('keydown', { key: 'ArrowRight', altKey: true })
     expect(store.moveItem).toHaveBeenCalledWith({ itemId: notesId, parentId: folderId, index: 1 })
     await notes.trigger('keydown', { key: 'Delete' })
-    expect(store.trashItem).toHaveBeenCalledWith(notesId)
+    expect(store.trashItem).toHaveBeenCalledWith(notesId, expect.any(Function))
 
     store.trashedItems = [{ ...originalItems[2]!, trashedAt: stamp }]
     await flushPromises()

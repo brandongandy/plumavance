@@ -3,9 +3,10 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef, watch } from 'vue'
 
 import { binderApi, type MoveItemInput } from '../api/binder.js'
+import { ApiRequestError } from '../api/client.js'
 import { documentApi } from '../api/documents.js'
 import { applyMove } from '../features/binder/useBinderMove.js'
-import { useDocumentStore } from './document.js'
+import { useDocumentStore, type DocumentSession } from './document.js'
 import { useWritingProgressStore } from './writing-progress.js'
 
 export type WorkspacePanel = 'binder' | 'editor' | 'inspector'
@@ -55,12 +56,17 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
+function editableBuffer(session: DocumentSession | undefined): string {
+  return JSON.stringify(session ? [session.title, session.contentJson, session.notesText] : null)
+}
+
 export const useWorkspaceStore = defineStore('workspace', () => {
   const preferences = loadPreferences()
   const projectId = ref('')
   const project = ref<ProjectDto | null>(null)
   const items = ref<BinderItemDto[]>([])
   const trashedItems = ref<BinderItemDto[]>([])
+  const retainedTrashDocumentIds = ref(new Map<string, string[]>())
   const searchResults = ref<SearchResultDto[]>([])
   const activeItemId = ref<string | null>(null)
   const openDocumentIds = ref<string[]>([])
@@ -78,6 +84,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const errorMessage = ref('')
   let searchSequence = 0
   let loadSequence = 0
+  let projectEpoch = 0
 
   const activeItem = computed(() => items.value.find((item) => item.id === activeItemId.value) ?? null)
   const isSplit = computed(() => splitOrientation.value !== null && splitDocumentIds.value.length === 2)
@@ -137,14 +144,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   // Callers confirm dirty sessions before invoking actions that remove tabs.
-  function removeDocumentTabs(ids: readonly string[]): void {
+  function removeDocumentTabs(ids: readonly string[], retainedIds: ReadonlySet<string> = new Set()): void {
     const removed = new Set(ids)
     const activeIndex = activeTabId.value ? openDocumentIds.value.indexOf(activeTabId.value) : -1
     const splitRemoved = splitDocumentIds.value.some((id) => removed.has(id))
     const survivor = splitDocumentIds.value.find((id) => !removed.has(id))
     openDocumentIds.value = openDocumentIds.value.filter((id) => !removed.has(id))
     recentDocumentIds.value = recentDocumentIds.value.filter((id) => !removed.has(id))
-    for (const id of removed) useDocumentStore().discard(id)
+    for (const id of removed) {
+      if (!retainedIds.has(id)) useDocumentStore().discard(id)
+    }
     if (splitRemoved) exitSplit()
     if (splitRemoved || (activeTabId.value && removed.has(activeTabId.value))) {
       activeTabId.value = survivor ?? openDocumentIds.value[Math.min(Math.max(activeIndex, 0), openDocumentIds.value.length - 1)] ?? null
@@ -214,9 +223,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const projectChanged = projectId.value !== id
     const initializeTabs = projectChanged || project.value?.id !== id
     if (projectChanged) {
+      projectEpoch += 1
       project.value = null
       items.value = []
       trashedItems.value = []
+      retainedTrashDocumentIds.value.clear()
       searchResults.value = []
       searchSequence += 1
       activeItemId.value = null
@@ -241,6 +252,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       project.value = detail.project
       items.value = detail.items
       trashedItems.value = detail.trashedItems
+      reconcileRestoredSessions()
       const availableDocumentIds = new Set(detail.items.filter((item) => item.kind === 'document').map((item) => item.id))
       removeDocumentTabs(openDocumentIds.value.filter((documentId) => !availableDocumentIds.has(documentId)))
       const firstDocumentId = detail.items.find((item) => item.kind === 'document')?.id ?? null
@@ -263,27 +275,26 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function createItem(kind: BinderItemKind, parentId: string | null): Promise<string | undefined> {
     const creatingProjectId = projectId.value
+    const creatingEpoch = projectEpoch
     const selectedId = activeItemId.value
     const replacementId = activeTabId.value
     const documents = useDocumentStore()
     const replacementSession = replacementId ? documents.sessionFor(replacementId) : undefined
-    const buffer = (): string => JSON.stringify(replacementSession
-      ? [replacementSession.title, replacementSession.contentJson, replacementSession.notesText] : null)
-    const approvedBuffer = buffer()
+    const approvedBuffer = editableBuffer(replacementSession)
     const title = kind === 'folder' ? 'Untitled Folder' : 'Untitled Document'
     const created = await binderApi.create(creatingProjectId, { kind, parentId, title })
-    if (projectId.value !== creatingProjectId) return
+    if (projectId.value !== creatingProjectId || projectEpoch !== creatingEpoch) return
     const canReplace = activeItemId.value === selectedId && activeTabId.value === replacementId
       && (!replacementId || documents.sessionFor(replacementId) === replacementSession)
-      && buffer() === approvedBuffer
-    items.value = applyMove([...items.value, created], {
+      && editableBuffer(replacementSession) === approvedBuffer
+    items.value = applyMove([...items.value.filter((item) => item.id !== created.id), created], {
       itemId: created.id,
       parentId: created.parentId,
       index: created.position,
     })
     if (created.kind === 'document') {
       if (canReplace) replaceActiveDocument(created.id)
-      else openDocumentIds.value = [...openDocumentIds.value, created.id]
+      else openDocumentIds.value = [...new Set([...openDocumentIds.value, created.id])]
     } else if (canReplace) activeItemId.value = created.id
     await useWritingProgressStore().refresh()
     return created.id
@@ -354,30 +365,76 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return items.value.filter((item) => item.kind === 'document' && descendants.has(item.id)).map((item) => item.id)
   }
 
-  async function trashItem(id: string): Promise<void> {
-    const trashed = await binderApi.trash(id)
+  async function trashItem(id: string, canDiscardChanges: (ids: readonly string[]) => boolean = () => false): Promise<void> {
+    const epoch = projectEpoch
+    const documents = useDocumentStore()
     const descendantIds = itemIdsInSubtree(id)
-    const activeItemRemoved = descendantIds.has(activeItemId.value ?? '')
-    removeDocumentTabs(documentIdsInSubtree(id))
-    items.value = items.value.filter((item) => !descendantIds.has(item.id))
-    trashedItems.value = [trashed, ...trashedItems.value]
-    if (activeItemRemoved) activeItemId.value = activeTabId.value ?? items.value[0]?.id ?? null
-    await useWritingProgressStore().refresh()
+    const approved = new Map(documentIdsInSubtree(id).map((documentId) => {
+      const session = documents.sessionFor(documentId)
+      return [documentId, { session, buffer: editableBuffer(session) }] as const
+    }))
+    errorMessage.value = ''
+    try {
+      const trashed = await binderApi.trash(id)
+      if (projectEpoch !== epoch) return
+      for (const itemId of itemIdsInSubtree(id)) descendantIds.add(itemId)
+      const targetIds = [...new Set([...approved.keys(), ...documentIdsInSubtree(id)])]
+      const changedDirtyIds = targetIds.filter((documentId) => {
+        const session = documents.sessionFor(documentId)
+        const original = approved.get(documentId)
+        return session?.isDirty && (session !== original?.session || editableBuffer(session) !== original?.buffer)
+      })
+      const retainedIds = new Set(changedDirtyIds.length && !canDiscardChanges(changedDirtyIds) ? changedDirtyIds : [])
+      if (retainedIds.size) retainedTrashDocumentIds.value.set(id, [...retainedIds])
+      const activeItemRemoved = descendantIds.has(activeItemId.value ?? '')
+      removeDocumentTabs(targetIds, retainedIds)
+      items.value = items.value.filter((item) => !descendantIds.has(item.id))
+      trashedItems.value = [trashed, ...trashedItems.value.filter((item) => item.id !== id)]
+      if (activeItemRemoved) activeItemId.value = activeTabId.value ?? items.value[0]?.id ?? null
+      await useWritingProgressStore().refresh()
+    } catch (error) {
+      if (projectEpoch === epoch) errorMessage.value = errorText(error, 'The item could not be moved to Trash.')
+      throw error
+    }
+  }
+
+  function reconcileRestoredSessions(): void {
+    for (const id of retainedTrashDocumentIds.value.keys()) {
+      if (items.value.some((item) => item.id === id)) retainedTrashDocumentIds.value.delete(id)
+    }
   }
 
   async function restoreItem(id: string): Promise<void> {
+    const epoch = projectEpoch
     const selected = activeItemId.value
-    await binderApi.restore(id)
-    trashedItems.value = trashedItems.value.filter((item) => item.id !== id)
-    const detail = await binderApi.getProject(projectId.value)
-    project.value = detail.project
-    items.value = detail.items
-    trashedItems.value = detail.trashedItems
-    activeItemId.value = selected && detail.items.some((item) => item.id === selected) ? selected : null
-    await useWritingProgressStore().refresh()
+    errorMessage.value = ''
+    try {
+      try {
+        await binderApi.restore(id)
+      } catch (error) {
+        // A prior restore can succeed even if its following project refresh failed.
+        if (!(error instanceof ApiRequestError && error.code === 'BINDER_ITEM_NOT_TRASHED')) throw error
+      }
+      if (projectEpoch !== epoch) return
+      const detail = await binderApi.getProject(projectId.value)
+      if (projectEpoch !== epoch) return
+      project.value = detail.project
+      items.value = detail.items
+      trashedItems.value = detail.trashedItems
+      reconcileRestoredSessions()
+      activeItemId.value = selected && detail.items.some((item) => item.id === selected) ? selected : null
+      await useWritingProgressStore().refresh()
+    } catch (error) {
+      if (projectEpoch === epoch) errorMessage.value = errorText(error, 'The item could not be restored.')
+      throw error
+    }
   }
 
   async function deleteItem(id: string): Promise<void> {
+    if (retainedTrashDocumentIds.value.has(id)) {
+      errorMessage.value = 'Restore this item to recover its unsaved edits before deleting it.'
+      return
+    }
     await binderApi.delete(id)
     trashedItems.value = trashedItems.value.filter((item) => item.id !== id)
     await useWritingProgressStore().refresh()
@@ -412,6 +469,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     project,
     items,
     trashedItems,
+    retainedTrashDocumentIds,
     searchResults,
     activeItemId,
     activeItem,

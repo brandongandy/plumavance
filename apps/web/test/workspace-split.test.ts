@@ -53,6 +53,43 @@ afterEach(() => {
 })
 
 describe('workspace split state', () => {
+  test('ignores_an_old_create_when_the_same_project_is_reopened_with_the_created_item', async () => {
+    // Catches an A→B→A response matching the project ID but belonging to an obsolete workspace incarnation.
+    const store = workspace()
+    const created = { ...items[1]!, id: 'created', title: 'Created chapter' }
+    let finish!: (item: BinderItemDto) => void
+    vi.spyOn(binderApi, 'create').mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    vi.spyOn(binderApi, 'getProject').mockImplementation(async (id) => ({
+      project: { ...project, id }, items: id === projectId ? [...items, created] : [], trashedItems: [],
+    }))
+    vi.spyOn(useWritingProgressStore(), 'load').mockResolvedValue()
+    const creating = store.createItem('document', folderId)
+    await store.load('other-project')
+    await store.load(projectId)
+    store.openDocumentInNewTab(created.id)
+    store.activateTab(firstId)
+    finish(created)
+    await creating
+    expect(store.items.filter((item) => item.id === created.id)).toHaveLength(1)
+    expect(store.openDocumentIds).toEqual([firstId, created.id])
+    expect(store.activeTabId).toBe(firstId)
+    expect(store.activeItemId).toBe(firstId)
+  })
+
+  test('reconciles_a_create_already_seen_by_a_same_project_refresh_without_duplicate_ids', async () => {
+    const store = workspace()
+    const created = { ...items[1]!, id: 'created', title: 'Created chapter' }
+    let finish!: (item: BinderItemDto) => void
+    vi.spyOn(binderApi, 'create').mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    const creating = store.createItem('document', folderId)
+    store.items.push(created)
+    store.openDocumentInNewTab(created.id)
+    finish(created)
+    await creating
+    expect(store.items.filter((item) => item.id === created.id)).toHaveLength(1)
+    expect(store.openDocumentIds.filter((id) => id === created.id)).toHaveLength(1)
+  })
+
   test('enters_with_the_focused_and_most_recent_other_tab', () => {
     const store = workspace()
     store.activateTab(secondId)

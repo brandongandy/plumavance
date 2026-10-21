@@ -152,7 +152,7 @@ async function handleKeydown(event: KeyboardEvent, item: BinderItemDto): Promise
     editingId.value = item.id
   } else if (event.key === 'Delete') {
     event.preventDefault()
-    if (unsavedGuard.canDiscard(store.documentIdsInSubtree(item.id))) await store.trashItem(item.id)
+    await trash(item.id)
   } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
     const key = event.key.toLocaleLowerCase()
     const match = [...visibleItems.value.slice(index + 1), ...visibleItems.value.slice(0, index + 1)].find(
@@ -203,9 +203,15 @@ async function add(kind: 'folder' | 'document'): Promise<void> {
   }
 }
 
+async function trash(itemId: string): Promise<void> {
+  if (!unsavedGuard.canDiscard(store.documentIdsInSubtree(itemId))) return
+  try {
+    await store.trashItem(itemId, unsavedGuard.canDiscard)
+  } catch { /* The store exposes a recoverable Binder error. */ }
+}
+
 async function trashSelected(): Promise<void> {
-  if (!store.activeItemId || !unsavedGuard.canDiscard(store.documentIdsInSubtree(store.activeItemId))) return
-  await store.trashItem(store.activeItemId)
+  if (store.activeItemId) await trash(store.activeItemId)
 }
 
 function handleDragStart(event: DragEvent, item: BinderItemDto): void {
@@ -243,7 +249,9 @@ async function handleDrop(event: DragEvent, target: BinderItemDto): Promise<void
 }
 
 async function restore(itemId: string): Promise<void> {
-  await store.restoreItem(itemId)
+  try {
+    await store.restoreItem(itemId)
+  } catch { /* Keep the Trash entry and its recovery action available. */ }
 }
 </script>
 
@@ -295,7 +303,12 @@ async function restore(itemId: string): Promise<void> {
           <span>Trash</span>
         </div>
         <div v-for="item in store.trashedItems" :key="item.id" class="trash-row">
-          <span class="min-w-0 flex-1 truncate">{{ item.title }}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block truncate">{{ item.title }}</span>
+            <span v-if="store.retainedTrashDocumentIds.has(item.id)" data-trash-recovery role="status" class="block text-xs">
+              Unsaved edits kept. Restore to continue editing.
+            </span>
+          </span>
           <Button
             icon="pi pi-replay"
             text
@@ -307,10 +320,11 @@ async function restore(itemId: string): Promise<void> {
             icon="pi pi-times"
             text
             :aria-label="`Permanently delete ${item.title}`"
+            :disabled="store.retainedTrashDocumentIds.has(item.id)"
             @click="pendingDeleteId = item.id"
           />
           <template v-else>
-            <Button label="Delete" severity="danger" :aria-label="`Confirm delete ${item.title}`" @click="store.deleteItem(item.id)" />
+            <Button label="Delete" severity="danger" :aria-label="`Confirm delete ${item.title}`" :disabled="store.retainedTrashDocumentIds.has(item.id)" @click="store.deleteItem(item.id)" />
             <Button label="Cancel" text :aria-label="`Cancel delete ${item.title}`" @click="pendingDeleteId = null" />
           </template>
         </div>
