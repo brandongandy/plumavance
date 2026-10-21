@@ -160,6 +160,48 @@ describe('split document panes', () => {
     expect(useDocumentStore().sessionFor(secondId)?.title).toBe('Reference notes')
   })
 
+  test.each([
+    ['save', 'suspension'],
+    ['save', 'replacement'],
+    ['keepMine', 'suspension'],
+    ['keepMine', 'replacement'],
+    ['reloadServerCopy', 'suspension'],
+    ['reloadServerCopy', 'replacement'],
+  ] as const)('reports_%s_completion_after_pane_%s', async (action, transition) => {
+    const wrapper = mountSplit()
+    await flushPromises()
+    const documents = useDocumentStore()
+    documents.setTitle(secondId, 'Retitled research')
+    if (action !== 'save') {
+      vi.mocked(documentApi.save).mockRejectedValueOnce(new ApiRequestError(409, {
+        code: 'DOCUMENT_CONFLICT', message: 'Changed elsewhere.',
+        details: { currentRevision: 3, savedAt: 'later' },
+      }))
+      await documents.save(secondId)
+      await flushPromises()
+    }
+    let resolveOperation: ((document: DocumentDto) => void) | undefined
+    const pending = new Promise<DocumentDto>((resolve) => { resolveOperation = resolve })
+    if (action === 'reloadServerCopy') vi.mocked(documentApi.get).mockReturnValueOnce(pending)
+    else vi.mocked(documentApi.save).mockReturnValueOnce(pending)
+    const pane = wrapper.get(`[data-document-pane="${secondId}"]`)
+    if (action === 'save') {
+      await pane.get('[data-document-editor]').trigger('keydown', { key: 's', ctrlKey: true })
+    } else {
+      const label = action === 'keepMine' ? 'Keep mine' : 'Reload server copy'
+      await pane.findAll('button').find((button) => button.text() === label)!.trigger('click')
+    }
+    expect(wrapper.emitted('saved')).toBeUndefined()
+    if (transition === 'suspension') await wrapper.setProps({ singlePane: true })
+    else await wrapper.setProps({ documentIds: [firstId, thirdId], focusedId: thirdId })
+    expect(wrapper.find(`[data-document-pane="${secondId}"]`).exists()).toBe(false)
+    resolveOperation?.(fixture(secondId, { title: 'Saved research', revision: 4 }))
+    await flushPromises()
+    expect(documents.sessionFor(secondId)?.title).toBe('Saved research')
+    expect(wrapper.emitted('saved')).toEqual([[secondId, 'Saved research']])
+    expect(documents.sessionFor(firstId)?.title).toBe('Chapter One')
+  })
+
   test.each(['vertical', 'horizontal'] as const)('keeps_stable_%s_grid_order_and_forwards_keyboard_resize', async (orientation) => {
     const wrapper = mountSplit({ orientation, ratio: 0.4 })
     await flushPromises()

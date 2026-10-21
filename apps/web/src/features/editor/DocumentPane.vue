@@ -1,5 +1,11 @@
+<script lang="ts">
+import type { InjectionKey } from 'vue'
+
+export const unmountedPaneSavedKey: InjectionKey<(id: string, title: string) => void> = Symbol('unmountedPaneSaved')
+</script>
+
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, watch } from 'vue'
 
 import { useDocumentStore } from '../../stores/document.js'
 import DocumentEditor from './DocumentEditor.vue'
@@ -14,6 +20,9 @@ const emit = defineEmits<{
 }>()
 const documents = useDocumentStore()
 const session = computed(() => documents.sessionFor(props.documentId))
+const reportUnmountedSave = inject(unmountedPaneSavedKey, null)
+let unmounted = false
+onBeforeUnmount(() => { unmounted = true })
 
 watch(() => props.documentId, (id) => {
   const current = documents.sessionFor(id)
@@ -37,7 +46,10 @@ async function reloadServerCopy(): Promise<void> {
 
 function notifySaved(id: string): void {
   const current = documents.sessionFor(id)
-  if (current) emit('saved', id, current.title)
+  if (!current) return
+  // Vue ignores component emits after unmount; the host outlives displaced panes.
+  if (unmounted) reportUnmountedSave?.(id, current.title)
+  else emit('saved', id, current.title)
 }
 </script>
 
