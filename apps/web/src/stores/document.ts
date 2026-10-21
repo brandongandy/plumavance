@@ -6,7 +6,7 @@ import type {
   SnapshotSummaryDto,
 } from '@pluma/shared'
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, reactive, shallowRef } from 'vue'
 
 import { ApiRequestError } from '../api/client.js'
 import { documentApi } from '../api/documents.js'
@@ -27,310 +27,407 @@ interface SavedBuffer {
   notesText: string
 }
 
-const emptyContent: EditorDocument = { type: 'doc', content: [{ type: 'paragraph' }] }
+export interface DocumentSession {
+  documentId: string
+  title: string
+  contentJson: EditorDocument
+  notesText: string
+  revision: number
+  savedAt: string
+  savedBuffer: SavedBuffer | null
+  operation: 'idle' | 'saving' | 'failed' | 'conflict'
+  conflict: ConflictMetadata | null
+  errorMessage: string
+  loading: boolean
+  snapshots: SnapshotSummaryDto[]
+  scrollTop: number
+  readonly isDirty: boolean
+  readonly contentText: string
+  readonly counts: { words: number; characters: number }
+  readonly savedWordCount: number
+  readonly saveState: SaveState
+}
+
+interface SessionRequests {
+  generation: number
+  write: number
+  snapshotList: number
+  snapshotDetail: number
+  snapshotMutations: Map<string, number>
+}
 
 function bufferOf(document: DocumentDto): SavedBuffer {
-  return {
-    title: document.title,
-    contentJson: document.contentJson,
-    notesText: document.notesText,
-  }
+  return { title: document.title, contentJson: document.contentJson, notesText: document.notesText }
 }
 
 function sameContent(left: EditorDocument, right: EditorDocument): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function createSession(id: string): DocumentSession {
+  const session: DocumentSession = reactive({
+    documentId: id,
+    title: '',
+    contentJson: { type: 'doc', content: [{ type: 'paragraph' }] } as EditorDocument,
+    notesText: '',
+    revision: 0,
+    savedAt: '',
+    savedBuffer: null as SavedBuffer | null,
+    operation: 'idle' as DocumentSession['operation'],
+    conflict: null as ConflictMetadata | null,
+    errorMessage: '',
+    loading: false,
+    snapshots: [] as SnapshotSummaryDto[],
+    scrollTop: 0,
+    isDirty: computed(() => {
+      const saved = session.savedBuffer
+      return saved !== null && (
+        session.title !== saved.title || session.notesText !== saved.notesText ||
+        !sameContent(session.contentJson, saved.contentJson)
+      )
+    }),
+    contentText: computed(() => editorText(session.contentJson)),
+    counts: computed(() => countText(session.contentText)),
+    savedWordCount: computed(() => session.savedBuffer
+      ? countText(editorText(session.savedBuffer.contentJson)).words : 0),
+    saveState: computed<SaveState>(() => session.operation !== 'idle'
+      ? session.operation : session.isDirty ? 'unsaved' : 'saved'),
+  })
+  return session
+}
+
 export const useDocumentStore = defineStore('document', () => {
-  const documentId = ref<string | null>(null)
-  const title = ref('')
-  const contentJson = ref<EditorDocument>(emptyContent)
-  const notesText = ref('')
-  const revision = ref(0)
-  const savedAt = ref('')
-  const savedBuffer = ref<SavedBuffer | null>(null)
-  const operation = ref<'idle' | 'saving' | 'failed' | 'conflict'>('idle')
-  const conflict = ref<ConflictMetadata | null>(null)
-  const errorMessage = ref('')
-  const loading = ref(false)
-  const snapshots = ref<SnapshotSummaryDto[]>([])
-  let loadSequence = 0
-  let snapshotDetailSequence = 0
+  const sessions = reactive(new Map<string, DocumentSession>())
+  const requests = new WeakMap<DocumentSession, SessionRequests>()
 
-  const isCurrent = (id: string, sequence: number): boolean =>
-    documentId.value === id && loadSequence === sequence
+  // Deprecated compatibility facade. Remove after WorkspaceView and SnapshotList migrate.
+  const legacyActiveId = shallowRef<string | null>(null)
+  const emptySession = createSession('')
+  const legacySession = computed(() => sessionFor(legacyActiveId.value ?? '') ?? emptySession)
 
-  const isDirty = computed(() => {
-    const saved = savedBuffer.value
-    if (!saved || !documentId.value) return false
-    return (
-      title.value !== saved.title ||
-      notesText.value !== saved.notesText ||
-      !sameContent(contentJson.value, saved.contentJson)
-    )
-  })
-  const contentText = computed(() => editorText(contentJson.value))
-  const counts = computed(() => countText(contentText.value))
-  const savedWordCount = computed(() =>
-    savedBuffer.value ? countText(editorText(savedBuffer.value.contentJson)).words : 0,
-  )
-  const saveState = computed<SaveState>(() => {
-    if (operation.value !== 'idle') return operation.value
-    return isDirty.value ? 'unsaved' : 'saved'
-  })
-
-  function applyServerDocument(document: DocumentDto): void {
-    documentId.value = document.id
-    title.value = document.title
-    contentJson.value = document.contentJson
-    notesText.value = document.notesText
-    revision.value = document.revision
-    savedAt.value = document.savedAt
-    savedBuffer.value = bufferOf(document)
-    operation.value = 'idle'
-    conflict.value = null
-    errorMessage.value = ''
+  function sessionFor(id: string): DocumentSession | undefined {
+    return sessions.get(id)
   }
 
-  async function load(
-    id: string,
-    confirmDiscard: () => boolean = () => window.confirm('Discard unsaved changes?'),
-    force = false,
-  ): Promise<boolean> {
-    if (!force && documentId.value && documentId.value !== id && isDirty.value && !confirmDiscard()) {
-      return false
+  function ensureSession(id: string): DocumentSession {
+    let session = sessionFor(id)
+    if (!session) {
+      session = createSession(id)
+      sessions.set(id, session)
+      requests.set(session, {
+        generation: 0, write: 0, snapshotList: 0, snapshotDetail: 0,
+        snapshotMutations: new Map(),
+      })
     }
-    const sequence = ++loadSequence
-    loading.value = true
-    errorMessage.value = ''
-    snapshots.value = []
+    return session
+  }
+
+  function isCurrent(session: DocumentSession, generation: number): boolean {
+    return sessionFor(session.documentId) === session && requests.get(session)?.generation === generation
+  }
+
+  function applyServerDocument(session: DocumentSession, document: DocumentDto): void {
+    session.title = document.title
+    session.contentJson = document.contentJson
+    session.notesText = document.notesText
+    session.revision = document.revision
+    session.savedAt = document.savedAt
+    session.savedBuffer = bufferOf(document)
+    session.operation = 'idle'
+    session.conflict = null
+    session.errorMessage = ''
+  }
+
+  function load(id: string, force?: boolean): Promise<boolean>
+  /** @deprecated Pass a force boolean; dirty navigation is handled by callers. */
+  function load(id: string, confirmDiscard: () => boolean, force?: boolean): Promise<boolean>
+  async function load(id: string, forceOrConfirm: boolean | (() => boolean) = false, legacyForce = false): Promise<boolean> {
+    legacyActiveId.value = id
+    const force = typeof forceOrConfirm === 'boolean' ? forceOrConfirm : legacyForce
+    const session = ensureSession(id)
+    if (!force && session.savedBuffer) return true
+    const state = requests.get(session)!
+    const generation = ++state.generation
+    session.loading = true
+    session.errorMessage = ''
+    session.operation = 'idle'
+    session.snapshots = []
     try {
       const document = await documentApi.get(id)
-      if (sequence !== loadSequence) return false
-      applyServerDocument(document)
-      void loadSnapshotsFor(document.id, sequence)
+      if (!isCurrent(session, generation) || document.id !== id) return false
+      applyServerDocument(session, document)
+      void loadSnapshots(id)
       return true
     } catch (error) {
-      if (sequence === loadSequence) {
-        operation.value = 'failed'
-        errorMessage.value = error instanceof Error ? error.message : 'The document could not be loaded.'
+      if (isCurrent(session, generation)) {
+        session.operation = 'failed'
+        session.errorMessage = error instanceof Error ? error.message : 'The document could not be loaded.'
       }
       return false
     } finally {
-      if (sequence === loadSequence) loading.value = false
+      if (isCurrent(session, generation)) session.loading = false
     }
+  }
+
+  function discard(id: string): void {
+    const session = sessionFor(id)
+    if (session) requests.get(session)!.generation += 1
+    sessions.delete(id)
+    if (legacyActiveId.value === id) legacyActiveId.value = null
   }
 
   function clear(): void {
-    loadSequence += 1
-    documentId.value = null
-    title.value = ''
-    contentJson.value = emptyContent
-    notesText.value = ''
-    revision.value = 0
-    savedAt.value = ''
-    savedBuffer.value = null
-    operation.value = 'idle'
-    conflict.value = null
-    errorMessage.value = ''
-    loading.value = false
-    snapshots.value = []
+    for (const id of sessions.keys()) discard(id)
+    legacyActiveId.value = null
   }
 
-  async function loadSnapshotsFor(id: string, sequence: number): Promise<void> {
+  function dirtyDocumentIds(ids: readonly string[] = [...sessions.keys()]): string[] {
+    return ids.filter((id) => sessionFor(id)?.isDirty)
+  }
+
+  function hasDirtySessions(ids?: readonly string[]): boolean {
+    return dirtyDocumentIds(ids).length > 0
+  }
+
+  async function loadSnapshots(id = legacyActiveId.value ?? ''): Promise<void> {
+    const session = sessionFor(id)
+    if (!session) return
+    const state = requests.get(session)!
+    const generation = state.generation
+    const sequence = ++state.snapshotList
     try {
       const loaded = await snapshotApi.list(id)
-      if (isCurrent(id, sequence)) snapshots.value = loaded
+      if (isCurrent(session, generation) && state.snapshotList === sequence) {
+        session.snapshots = loaded.filter((snapshot) => snapshot.documentId === id)
+      }
     } catch (error) {
-      if (isCurrent(id, sequence)) {
-        errorMessage.value = error instanceof Error ? error.message : 'Snapshots could not be loaded.'
+      if (isCurrent(session, generation) && state.snapshotList === sequence) {
+        session.errorMessage = error instanceof Error ? error.message : 'Snapshots could not be loaded.'
       }
     }
   }
 
-  async function loadSnapshots(): Promise<void> {
-    if (!documentId.value) {
-      snapshots.value = []
-      return
-    }
-    await loadSnapshotsFor(documentId.value, loadSequence)
+  function ownsSnapshot(session: DocumentSession, snapshotId: string): boolean {
+    return session.snapshots.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === session.documentId)
   }
 
-  async function takeSnapshot(name: string): Promise<boolean> {
-    const id = documentId.value
-    const sequence = loadSequence
-    if (!id || isDirty.value) return false
-    const trimmed = name.trim()
+  function snapshotMutation(session: DocumentSession, key: string): () => boolean {
+    const state = requests.get(session)!
+    const generation = state.generation
+    const sequence = (state.snapshotMutations.get(key) ?? 0) + 1
+    state.snapshotMutations.set(key, sequence)
+    state.snapshotList += 1
+    return () => isCurrent(session, generation) && state.snapshotMutations.get(key) === sequence
+  }
+
+  function takeSnapshot(id: string, name: string): Promise<boolean>
+  /** @deprecated Pass the document ID first. */
+  function takeSnapshot(name: string): Promise<boolean>
+  async function takeSnapshot(idOrName: string, name?: string): Promise<boolean> {
+    const id = name === undefined ? legacyActiveId.value ?? '' : idOrName
+    const session = sessionFor(id)
+    if (!session || session.isDirty || session.loading || session.operation === 'saving') return false
+    const current = snapshotMutation(session, 'create')
+    const trimmed = (name ?? idOrName).trim()
     const snapshot = await snapshotApi.create(id, trimmed || undefined)
-    if (!isCurrent(id, sequence) || snapshot.documentId !== id) return false
-    snapshots.value = [snapshot, ...snapshots.value]
+    if (!current() || snapshot.documentId !== id) return false
+    requests.get(session)!.snapshotList += 1
+    session.snapshots = [snapshot, ...session.snapshots]
     return true
   }
 
-  async function renameSnapshot(snapshotId: string, name: string): Promise<void> {
-    const id = documentId.value
-    const sequence = loadSequence
-    if (!id || !snapshots.value.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === id)) return
-    const renamed = await snapshotApi.rename(snapshotId, name.trim())
-    if (!isCurrent(id, sequence) || renamed.documentId !== id) return
-    snapshots.value = snapshots.value.map((snapshot) =>
-      snapshot.id === renamed.id ? renamed : snapshot,
-    )
+  function renameSnapshot(id: string, snapshotId: string, name: string): Promise<void>
+  /** @deprecated Pass the document ID first. */
+  function renameSnapshot(snapshotId: string, name: string): Promise<void>
+  async function renameSnapshot(idOrSnapshot: string, snapshotOrName: string, name?: string): Promise<void> {
+    const id = name === undefined ? legacyActiveId.value ?? '' : idOrSnapshot
+    const snapshotId = name === undefined ? idOrSnapshot : snapshotOrName
+    const session = sessionFor(id)
+    if (!session || !ownsSnapshot(session, snapshotId)) return
+    const current = snapshotMutation(session, snapshotId)
+    const renamed = await snapshotApi.rename(snapshotId, (name ?? snapshotOrName).trim())
+    if (!current() || renamed.documentId !== id) return
+    requests.get(session)!.snapshotList += 1
+    session.snapshots = session.snapshots.map((snapshot) => snapshot.id === renamed.id ? renamed : snapshot)
   }
 
-  async function loadSnapshotDetail(snapshotId: string): Promise<SnapshotDto | undefined> {
-    const id = documentId.value
-    const sequence = loadSequence
-    const detailSequence = ++snapshotDetailSequence
-    if (!id || !snapshots.value.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === id)) {
-      return undefined
-    }
+  function loadSnapshotDetail(id: string, snapshotId: string): Promise<SnapshotDto | undefined>
+  /** @deprecated Pass the document ID first. */
+  function loadSnapshotDetail(snapshotId: string): Promise<SnapshotDto | undefined>
+  async function loadSnapshotDetail(idOrSnapshot: string, explicitSnapshot?: string): Promise<SnapshotDto | undefined> {
+    const id = explicitSnapshot === undefined ? legacyActiveId.value ?? '' : idOrSnapshot
+    const snapshotId = explicitSnapshot ?? idOrSnapshot
+    const session = sessionFor(id)
+    if (!session || !ownsSnapshot(session, snapshotId)) return undefined
+    const state = requests.get(session)!
+    const generation = state.generation
+    const sequence = ++state.snapshotDetail
     try {
       const snapshot = await snapshotApi.get(snapshotId)
-      if (
-        !isCurrent(id, sequence) ||
-        detailSequence !== snapshotDetailSequence ||
-        snapshot.documentId !== id
-      ) return undefined
+      if (!isCurrent(session, generation) || sequence !== state.snapshotDetail || snapshot.documentId !== id) return undefined
       return snapshot
     } catch (error) {
-      if (isCurrent(id, sequence) && detailSequence === snapshotDetailSequence) {
-        errorMessage.value = error instanceof Error ? error.message : 'The snapshot could not be loaded.'
+      if (isCurrent(session, generation) && sequence === state.snapshotDetail) {
+        session.errorMessage = error instanceof Error ? error.message : 'The snapshot could not be loaded.'
       }
       return undefined
     }
   }
 
-  async function restoreSnapshot(snapshotId: string): Promise<boolean> {
-    const id = documentId.value
-    const sequence = loadSequence
-    if (!id || isDirty.value || !snapshots.value.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === id)) return false
-    const expectedRevision = revision.value
+  function restoreSnapshot(id: string, snapshotId: string): Promise<boolean>
+  /** @deprecated Pass the document ID first. */
+  function restoreSnapshot(snapshotId: string): Promise<boolean>
+  async function restoreSnapshot(idOrSnapshot: string, explicitSnapshot?: string): Promise<boolean> {
+    const id = explicitSnapshot === undefined ? legacyActiveId.value ?? '' : idOrSnapshot
+    const snapshotId = explicitSnapshot ?? idOrSnapshot
+    const session = sessionFor(id)
+    if (!session || session.isDirty || session.loading || session.operation === 'saving' || !ownsSnapshot(session, snapshotId)) return false
+    const state = requests.get(session)!
+    const generation = state.generation
+    const sequence = ++state.write
+    session.operation = 'saving'
     try {
-      const restored = await snapshotApi.restore(snapshotId, expectedRevision)
-      if (!isCurrent(id, sequence) || restored.id !== id) return false
-      useWritingProgressStore().accountSavedBody(restored.projectId, savedWordCount.value, countText(editorText(restored.contentJson)).words)
-      applyServerDocument(restored)
+      const restored = await snapshotApi.restore(snapshotId, session.revision)
+      if (!isCurrent(session, generation) || state.write !== sequence || restored.id !== id) return false
+      useWritingProgressStore().accountSavedBody(restored.projectId, session.savedWordCount, countText(editorText(restored.contentJson)).words)
+      applyServerDocument(session, restored)
       return true
     } catch (error) {
-      if (isCurrent(id, sequence)) {
-        errorMessage.value = error instanceof Error ? error.message : 'The snapshot could not be restored.'
+      if (isCurrent(session, generation) && state.write === sequence) {
+        session.operation = 'failed'
+        session.errorMessage = error instanceof Error ? error.message : 'The snapshot could not be restored.'
       }
       return false
     }
   }
 
-  async function deleteSnapshot(snapshotId: string): Promise<void> {
-    const id = documentId.value
-    const sequence = loadSequence
-    if (!id || !snapshots.value.some((snapshot) => snapshot.id === snapshotId && snapshot.documentId === id)) return
+  function deleteSnapshot(id: string, snapshotId: string): Promise<void>
+  /** @deprecated Pass the document ID first. */
+  function deleteSnapshot(snapshotId: string): Promise<void>
+  async function deleteSnapshot(idOrSnapshot: string, explicitSnapshot?: string): Promise<void> {
+    const id = explicitSnapshot === undefined ? legacyActiveId.value ?? '' : idOrSnapshot
+    const snapshotId = explicitSnapshot ?? idOrSnapshot
+    const session = sessionFor(id)
+    if (!session || !ownsSnapshot(session, snapshotId)) return
+    const current = snapshotMutation(session, snapshotId)
     await snapshotApi.delete(snapshotId)
-    if (!isCurrent(id, sequence)) return
-    snapshots.value = snapshots.value.filter((snapshot) => snapshot.id !== snapshotId)
+    if (!current()) return
+    requests.get(session)!.snapshotList += 1
+    session.snapshots = session.snapshots.filter((snapshot) => snapshot.id !== snapshotId)
   }
 
-  function setTitle(value: string): void {
-    title.value = value
-    if (operation.value === 'failed') operation.value = 'idle'
+  function setTitle(id: string, value: string): void
+  /** @deprecated Pass the document ID first. */
+  function setTitle(value: string): void
+  function setTitle(idOrValue: string, value?: string): void {
+    const session = sessionFor(value === undefined ? legacyActiveId.value ?? '' : idOrValue)
+    if (!session) return
+    session.title = value ?? idOrValue
+    if (session.operation === 'failed') session.operation = 'idle'
   }
 
-  function setContent(value: EditorDocument): void {
-    contentJson.value = value
-    if (operation.value === 'failed') operation.value = 'idle'
+  function setContent(id: string, value: EditorDocument): void
+  /** @deprecated Pass the document ID first. */
+  function setContent(value: EditorDocument): void
+  function setContent(idOrValue: string | EditorDocument, value?: EditorDocument): void {
+    const session = sessionFor(typeof idOrValue === 'string' ? idOrValue : legacyActiveId.value ?? '')
+    if (!session) return
+    session.contentJson = value ?? idOrValue as EditorDocument
+    if (session.operation === 'failed') session.operation = 'idle'
   }
 
-  function setNotes(value: string): void {
-    notesText.value = value
-    if (operation.value === 'failed') operation.value = 'idle'
+  function setNotes(id: string, value: string): void
+  /** @deprecated Pass the document ID first. */
+  function setNotes(value: string): void
+  function setNotes(idOrValue: string, value?: string): void {
+    const session = sessionFor(value === undefined ? legacyActiveId.value ?? '' : idOrValue)
+    if (!session) return
+    session.notesText = value ?? idOrValue
+    if (session.operation === 'failed') session.operation = 'idle'
   }
 
-  async function save(): Promise<boolean> {
-    const id = documentId.value
-    const sequence = loadSequence
-    if (!id || operation.value === 'saving') return false
-    if (!title.value.trim()) {
-      operation.value = 'failed'
-      errorMessage.value = 'Document title cannot be blank.'
+  function setScrollTop(id: string, value: number): void {
+    const session = sessionFor(id)
+    if (session) session.scrollTop = value
+  }
+
+  async function save(id = legacyActiveId.value ?? ''): Promise<boolean> {
+    const session = sessionFor(id)
+    if (!session || session.loading || !session.savedBuffer || session.operation === 'saving') return false
+    if (!session.title.trim()) {
+      session.operation = 'failed'
+      session.errorMessage = 'Document title cannot be blank.'
       return false
     }
+    const state = requests.get(session)!
+    const generation = state.generation
+    const sequence = ++state.write
     const payload: SaveDocumentRequest = {
-      title: title.value.trim(),
-      contentJson: contentJson.value,
-      notesText: notesText.value,
-      expectedRevision: revision.value,
+      title: session.title.trim(), contentJson: session.contentJson,
+      notesText: session.notesText, expectedRevision: session.revision,
     }
-    operation.value = 'saving'
-    errorMessage.value = ''
-    conflict.value = null
+    session.operation = 'saving'
+    session.errorMessage = ''
+    session.conflict = null
     try {
       const saved = await documentApi.save(id, payload)
-      if (!isCurrent(id, sequence) || saved.id !== id) return false
-      useWritingProgressStore().accountSavedBody(saved.projectId, savedWordCount.value, countText(editorText(saved.contentJson)).words)
-      revision.value = saved.revision
-      savedAt.value = saved.savedAt
-      savedBuffer.value = bufferOf(saved)
-      const bufferStillMatchesRequest =
-        title.value.trim() === payload.title &&
-        notesText.value === payload.notesText &&
-        sameContent(contentJson.value, payload.contentJson)
+      if (!isCurrent(session, generation) || state.write !== sequence || saved.id !== id) return false
+      useWritingProgressStore().accountSavedBody(saved.projectId, session.savedWordCount, countText(editorText(saved.contentJson)).words)
+      session.revision = saved.revision
+      session.savedAt = saved.savedAt
+      session.savedBuffer = bufferOf(saved)
+      const bufferStillMatchesRequest = session.title.trim() === payload.title &&
+        session.notesText === payload.notesText && sameContent(session.contentJson, payload.contentJson)
       if (bufferStillMatchesRequest) {
-        title.value = saved.title
-        contentJson.value = saved.contentJson
-        notesText.value = saved.notesText
+        session.title = saved.title
+        session.contentJson = saved.contentJson
+        session.notesText = saved.notesText
       }
-      operation.value = 'idle'
+      session.operation = 'idle'
       return true
     } catch (error) {
-      if (!isCurrent(id, sequence)) return false
+      if (!isCurrent(session, generation) || state.write !== sequence) return false
       if (error instanceof ApiRequestError && error.status === 409 && error.code === 'DOCUMENT_CONFLICT') {
         const details = error.details as Partial<ConflictMetadata> | undefined
-        conflict.value = {
-          currentRevision: details?.currentRevision ?? revision.value,
-          savedAt: details?.savedAt ?? savedAt.value,
+        session.conflict = {
+          currentRevision: details?.currentRevision ?? session.revision,
+          savedAt: details?.savedAt ?? session.savedAt,
         }
-        operation.value = 'conflict'
+        session.operation = 'conflict'
       } else {
-        operation.value = 'failed'
+        session.operation = 'failed'
       }
-      errorMessage.value = error instanceof Error ? error.message : 'The document could not be saved.'
+      session.errorMessage = error instanceof Error ? error.message : 'The document could not be saved.'
       return false
     }
   }
 
-  async function reloadServerCopy(): Promise<boolean> {
-    return documentId.value ? load(documentId.value, () => true, true) : false
+  async function reloadServerCopy(id = legacyActiveId.value ?? ''): Promise<boolean> {
+    return sessionFor(id) ? load(id, true) : false
   }
 
-  async function keepMine(): Promise<boolean> {
-    if (!conflict.value) return false
-    revision.value = conflict.value.currentRevision
-    savedAt.value = conflict.value.savedAt
-    operation.value = 'idle'
-    conflict.value = null
-    return save()
+  async function keepMine(id = legacyActiveId.value ?? ''): Promise<boolean> {
+    const session = sessionFor(id)
+    if (!session?.conflict) return false
+    session.revision = session.conflict.currentRevision
+    session.savedAt = session.conflict.savedAt
+    session.operation = 'idle'
+    session.conflict = null
+    return save(id)
   }
 
   return {
-    documentId,
-    title,
-    contentJson,
-    contentText,
-    notesText,
-    revision,
-    savedAt,
-    counts,
-    savedWordCount,
-    isDirty,
-    saveState,
-    conflict,
-    errorMessage,
-    loading,
-    snapshots,
+    sessions,
+    sessionFor,
+    dirtyDocumentIds,
+    hasDirtySessions,
+    discard,
     load,
     clear,
     setTitle,
     setContent,
     setNotes,
+    setScrollTop,
     save,
     reloadServerCopy,
     keepMine,
@@ -340,5 +437,22 @@ export const useDocumentStore = defineStore('document', () => {
     loadSnapshotDetail,
     restoreSnapshot,
     deleteSnapshot,
+    // Deprecated singleton facade: no independent document state lives here.
+    legacyActiveId,
+    documentId: computed(() => legacySession.value.savedBuffer ? legacyActiveId.value : null),
+    title: computed(() => legacySession.value.title),
+    contentJson: computed(() => legacySession.value.contentJson),
+    contentText: computed(() => legacySession.value.contentText),
+    notesText: computed(() => legacySession.value.notesText),
+    revision: computed(() => legacySession.value.revision),
+    savedAt: computed(() => legacySession.value.savedAt),
+    counts: computed(() => legacySession.value.counts),
+    savedWordCount: computed(() => legacySession.value.savedWordCount),
+    isDirty: computed(() => legacySession.value.isDirty),
+    saveState: computed(() => legacySession.value.saveState),
+    conflict: computed(() => legacySession.value.conflict),
+    errorMessage: computed(() => legacySession.value.errorMessage),
+    loading: computed(() => legacySession.value.loading),
+    snapshots: computed(() => legacySession.value.snapshots),
   }
 })

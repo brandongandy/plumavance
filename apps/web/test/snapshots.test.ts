@@ -85,6 +85,60 @@ async function mountedInspector() {
 }
 
 describe('snapshot inspector', () => {
+  test('targets_explicit_document_ids_for_snapshot_create_rename_restore_and_delete', async () => {
+    setActivePinia(createPinia())
+    const secondDocumentId = '44444444-4444-4444-8444-444444444444'
+    const createdSnapshot = { ...snapshotSummaryFixture, id: '55555555-5555-4555-8555-555555555555', name: 'Milestone' }
+    vi.spyOn(documentApi, 'get').mockImplementation(async (id) => ({ ...documentFixture(), id }))
+    vi.spyOn(snapshotApi, 'list').mockImplementation(async (id) => id === documentId ? [snapshotSummaryFixture] : [])
+    const create = vi.spyOn(snapshotApi, 'create').mockResolvedValue(createdSnapshot)
+    const rename = vi.spyOn(snapshotApi, 'rename').mockResolvedValue({ ...createdSnapshot, name: 'Renamed' })
+    const restore = vi.spyOn(snapshotApi, 'restore').mockResolvedValue(documentFixture('Restored prose', 3))
+    const remove = vi.spyOn(snapshotApi, 'delete').mockResolvedValue(undefined)
+    const store = useDocumentStore()
+    await Promise.all([store.load(documentId), store.load(secondDocumentId)])
+    await flushPromises()
+    store.setTitle(secondDocumentId, 'Second local draft')
+
+    expect(await store.takeSnapshot(documentId, '  Milestone  ')).toBe(true)
+    expect(create).toHaveBeenCalledWith(documentId, 'Milestone')
+    await store.renameSnapshot(documentId, createdSnapshot.id, '  Renamed  ')
+    expect(rename).toHaveBeenCalledWith(createdSnapshot.id, 'Renamed')
+    expect(store.sessionFor(documentId)?.snapshots[0]?.name).toBe('Renamed')
+    expect(await store.restoreSnapshot(documentId, createdSnapshot.id)).toBe(true)
+    expect(restore).toHaveBeenCalledWith(createdSnapshot.id, 2)
+    expect(store.sessionFor(documentId)?.contentText).toBe('Restored prose')
+    await store.deleteSnapshot(documentId, createdSnapshot.id)
+    expect(remove).toHaveBeenCalledWith(createdSnapshot.id)
+    expect(store.sessionFor(documentId)?.snapshots).toEqual([snapshotSummaryFixture])
+    expect(store.sessionFor(secondDocumentId)?.title).toBe('Second local draft')
+    expect(store.sessionFor(secondDocumentId)?.snapshots).toEqual([])
+    expect(store.sessionFor(secondDocumentId)?.isDirty).toBe(true)
+  })
+
+  test('snapshot_detail_requests_for_different_documents_do_not_invalidate_each_other', async () => {
+    setActivePinia(createPinia())
+    const secondDocumentId = '44444444-4444-4444-8444-444444444444'
+    const secondSnapshot = { ...snapshotFixture, id: '55555555-5555-4555-8555-555555555555', documentId: secondDocumentId }
+    let resolveFirst: ((snapshot: SnapshotDto) => void) | undefined
+    vi.spyOn(documentApi, 'get').mockImplementation(async (id) => ({ ...documentFixture(), id }))
+    vi.spyOn(snapshotApi, 'list').mockImplementation(async (id) => id === documentId
+      ? [snapshotSummaryFixture]
+      : [{ ...snapshotSummaryFixture, id: secondSnapshot.id, documentId: secondDocumentId }])
+    vi.spyOn(snapshotApi, 'get').mockImplementation((id) => id === snapshotId
+      ? new Promise((resolve) => { resolveFirst = resolve })
+      : Promise.resolve(secondSnapshot))
+    const store = useDocumentStore()
+    await Promise.all([store.load(documentId), store.load(secondDocumentId)])
+    await flushPromises()
+    const firstDetail = store.loadSnapshotDetail(documentId, snapshotId)
+    await expect(store.loadSnapshotDetail(secondDocumentId, secondSnapshot.id)).resolves.toEqual(secondSnapshot)
+    resolveFirst?.(snapshotFixture)
+    await expect(firstDetail).resolves.toEqual(snapshotFixture)
+    expect(store.sessionFor(documentId)?.errorMessage).toBe('')
+    expect(store.sessionFor(secondDocumentId)?.errorMessage).toBe('')
+  })
+
   async function progressForDocument(): Promise<ReturnType<typeof useWritingProgressStore>> {
     vi.spyOn(wordCountApi, 'getProgress').mockResolvedValueOnce({
       projectWordCount: 1000, dailyWordCount: 10, localDate: new Date().toLocaleDateString('en-CA'),
@@ -102,12 +156,12 @@ describe('snapshot inspector', () => {
     const { store, wrapper } = await mountedInspector()
     const progress = await progressForDocument()
     vi.spyOn(documentApi, 'save').mockResolvedValue(documentFixture(text, 3))
-    store.setContent(content(text))
-    expect(progress.liveProjectWordCount(store.counts.words, store.savedWordCount)).toBe(total)
-    await store.save()
+    store.setContent(documentId, content(text))
+    expect(progress.liveProjectWordCount(store.sessionFor(documentId)!.counts.words, store.sessionFor(documentId)!.savedWordCount)).toBe(total)
+    await store.save(documentId)
     await progress.refresh()
-    expect(store.savedWordCount).toBe(words)
-    expect(progress.liveProjectWordCount(store.counts.words, store.savedWordCount)).toBe(total)
+    expect(store.sessionFor(documentId)!.savedWordCount).toBe(words)
+    expect(progress.liveProjectWordCount(store.sessionFor(documentId)!.counts.words, store.sessionFor(documentId)!.savedWordCount)).toBe(total)
     expect(progress.dailyWordCount).toBe(10)
     wrapper.unmount()
   })
@@ -115,13 +169,13 @@ describe('snapshot inspector', () => {
   test('accounts for Save and Take Snapshot without relying on the workspace Save button', async () => {
     const { store, wrapper } = await mountedInspector()
     const progress = await progressForDocument()
-    store.setContent(content('Unsaved prose'))
+    store.setContent(documentId, content('Unsaved prose'))
     await wrapper.get('button[aria-label="Take snapshot"]').trigger('click')
     await flushPromises()
     ;(document.querySelector('button[aria-label="Save and take snapshot"]') as HTMLButtonElement).click()
     await flushPromises()
-    expect(store.isDirty).toBe(false)
-    expect(progress.liveProjectWordCount(store.counts.words, store.savedWordCount)).toBe(999)
+    expect(store.sessionFor(documentId)!.isDirty).toBe(false)
+    expect(progress.liveProjectWordCount(store.sessionFor(documentId)!.counts.words, store.sessionFor(documentId)!.savedWordCount)).toBe(999)
     expect(progress.dailyWordCount).toBe(10)
     wrapper.unmount()
   })
@@ -133,8 +187,8 @@ describe('snapshot inspector', () => {
     await flushPromises()
     ;(document.querySelector('button[aria-label="Confirm restore snapshot"]') as HTMLButtonElement).click()
     await flushPromises()
-    expect(store.contentText).toBe('Earlier prose')
-    expect(progress.liveProjectWordCount(store.counts.words, store.savedWordCount)).toBe(999)
+    expect(store.sessionFor(documentId)!.contentText).toBe('Earlier prose')
+    expect(progress.liveProjectWordCount(store.sessionFor(documentId)!.counts.words, store.sessionFor(documentId)!.savedWordCount)).toBe(999)
     expect(progress.dailyWordCount).toBe(10)
     wrapper.unmount()
   })
@@ -142,7 +196,7 @@ describe('snapshot inspector', () => {
   test('accepts_snapshot_summaries_without_content_bodies', async () => {
     const { wrapper, store } = await mountedInspector()
 
-    expect(store.snapshots).toEqual([snapshotSummaryFixture])
+    expect(store.sessionFor(documentId)!.snapshots).toEqual([snapshotSummaryFixture])
     expect(wrapper.text()).toContain('2 words')
   })
 
@@ -151,7 +205,7 @@ describe('snapshot inspector', () => {
     expect(wrapper.text()).toContain('First pass')
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(0)
 
-    store.setContent(content('Unsaved prose'))
+    store.setContent(documentId, content('Unsaved prose'))
     const trigger = wrapper.get('button[aria-label="Take snapshot"]')
     await trigger.trigger('click')
     await flushPromises()
@@ -191,7 +245,7 @@ describe('snapshot inspector', () => {
     await flushPromises()
     ;(document.querySelector('button[aria-label="Confirm restore snapshot"]') as HTMLButtonElement).click()
     await flushPromises()
-    expect(store.contentText).toBe('Earlier prose')
+    expect(store.sessionFor(documentId)!.contentText).toBe('Earlier prose')
     expect(requests.filter((request) => request.path === `/api/snapshots/${snapshotId}`)).toHaveLength(2)
 
     await wrapper.get('button[aria-label="Delete First pass"]').trigger('click')
@@ -202,7 +256,7 @@ describe('snapshot inspector', () => {
     expect(requests.filter((request) => request.path === `/api/snapshots/${snapshotId}` && request.method === 'GET')).toHaveLength(2)
   })
 
-  test('discards_snapshot_detail_loaded_after_switching_documents', async () => {
+  test('retains_snapshot_detail_for_its_session_after_loading_another_document', async () => {
     setActivePinia(createPinia())
     const secondDocumentId = '44444444-4444-4444-8444-444444444444'
     let resolveDetail: ((snapshot: SnapshotDto) => void) | undefined
@@ -215,13 +269,62 @@ describe('snapshot inspector', () => {
     )
     const store = useDocumentStore()
     await store.load(documentId)
-    await vi.waitFor(() => expect(store.snapshots).toHaveLength(1))
+    await vi.waitFor(() => expect(store.sessionFor(documentId)!.snapshots).toHaveLength(1))
 
-    const detail = store.loadSnapshotDetail(snapshotId)
+    const detail = store.loadSnapshotDetail(documentId, snapshotId)
     await store.load(secondDocumentId)
     resolveDetail?.(snapshotFixture)
 
-    await expect(detail).resolves.toBeUndefined()
+    await expect(detail).resolves.toEqual(snapshotFixture)
+    expect(store.sessionFor(secondDocumentId)?.snapshots).toEqual([])
+  })
+
+  test('a_late_snapshot_list_updates_only_its_matching_session', async () => {
+    setActivePinia(createPinia())
+    const secondDocumentId = '44444444-4444-4444-8444-444444444444'
+    let resolveFirst: ((snapshots: SnapshotSummaryDto[]) => void) | undefined
+    vi.spyOn(documentApi, 'get').mockImplementation(async (id) => ({ ...documentFixture(), id }))
+    const secondSnapshot = { ...snapshotSummaryFixture, id: '55555555-5555-4555-8555-555555555555', documentId: secondDocumentId, name: 'Second snapshot' }
+    vi.spyOn(snapshotApi, 'list').mockImplementation((id) => id === documentId
+      ? new Promise((resolve) => { resolveFirst = resolve })
+      : Promise.resolve([secondSnapshot]))
+    const store = useDocumentStore()
+    await Promise.all([store.load(documentId), store.load(secondDocumentId)])
+    resolveFirst?.([snapshotSummaryFixture])
+    await flushPromises()
+    expect(store.sessionFor(documentId)?.snapshots).toEqual([snapshotSummaryFixture])
+    expect(store.sessionFor(secondDocumentId)?.snapshots).toEqual([secondSnapshot])
+  })
+
+  test('an_older_snapshot_list_cannot_replace_a_newer_list_for_the_same_document', async () => {
+    setActivePinia(createPinia())
+    let resolveOld: ((snapshots: SnapshotSummaryDto[]) => void) | undefined
+    vi.spyOn(documentApi, 'get').mockResolvedValue(documentFixture())
+    vi.spyOn(snapshotApi, 'list')
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve }))
+      .mockResolvedValue([{ ...snapshotSummaryFixture, name: 'Newest list' }])
+    const store = useDocumentStore()
+    await store.load(documentId)
+    await store.loadSnapshots(documentId)
+    resolveOld?.([snapshotSummaryFixture])
+    await flushPromises()
+    expect(store.sessionFor(documentId)?.snapshots[0]?.name).toBe('Newest list')
+  })
+
+  test('discard_invalidates_pending_snapshot_operations_for_a_reopened_session', async () => {
+    setActivePinia(createPinia())
+    let resolveDetail: ((snapshot: SnapshotDto) => void) | undefined
+    vi.spyOn(documentApi, 'get').mockResolvedValue(documentFixture())
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([snapshotSummaryFixture])
+    vi.spyOn(snapshotApi, 'get').mockImplementation(() => new Promise((resolve) => { resolveDetail = resolve }))
+    const store = useDocumentStore()
+    await store.load(documentId)
+    await flushPromises()
+    const pending = store.loadSnapshotDetail(documentId, snapshotId)
+    store.discard(documentId)
+    await store.load(documentId)
+    resolveDetail?.(snapshotFixture)
+    await expect(pending).resolves.toBeUndefined()
   })
 
   test('an_older_snapshot_failure_cannot_replace_a_successful_retry', async () => {
@@ -251,7 +354,7 @@ describe('snapshot inspector', () => {
     expect(preview).not.toBeNull()
     expect(preview?.textContent).toContain('Earlier prose')
     expect(document.querySelector('[role="alert"]')).toBeNull()
-    expect(store.errorMessage).toBe('')
+    expect(store.sessionFor(documentId)!.errorMessage).toBe('')
   })
 
   test('renders_an_accessible_readable_comparison', async () => {
