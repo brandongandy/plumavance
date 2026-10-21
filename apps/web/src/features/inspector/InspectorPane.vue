@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
+import { useDocumentStore } from '../../stores/document.js'
 import DocumentNotes from './DocumentNotes.vue'
 import SnapshotList from './SnapshotList.vue'
 
-defineProps<{ notes: string; hasDocument: boolean }>()
-const emit = defineEmits<{ 'update:notes': [value: string] }>()
+const props = defineProps<{ documentId: string | null }>()
+const emit = defineEmits<{ saved: [id: string, title: string] }>()
+const documents = useDocumentStore()
+const session = computed(() => documents.sessionFor(props.documentId ?? ''))
 const activeTab = ref<'notes' | 'snapshots'>('notes')
 </script>
 
@@ -35,14 +38,14 @@ const activeTab = ref<'notes' | 'snapshots'>('notes')
     </div>
     <div v-if="activeTab === 'notes'" id="notes-panel" role="tabpanel" aria-labelledby="notes-tab" class="inspector-panel">
       <DocumentNotes
-        v-if="hasDocument"
-        :model-value="notes"
-        @update:model-value="emit('update:notes', $event)"
+        v-if="documentId && session?.savedBuffer"
+        :model-value="session.notesText"
+        @update:model-value="documents.setNotes(documentId, $event)"
       />
       <p v-else>No document selected.</p>
     </div>
     <div v-else id="snapshots-panel" role="tabpanel" aria-labelledby="snapshots-tab" class="inspector-panel">
-      <SnapshotList v-if="hasDocument" />
+      <SnapshotList v-if="documentId && session?.savedBuffer" :document-id="documentId" @saved="(id, title) => emit('saved', id, title)" />
       <p v-else>No document selected.</p>
     </div>
   </aside>

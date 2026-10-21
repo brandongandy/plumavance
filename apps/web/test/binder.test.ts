@@ -45,7 +45,7 @@ const originalItems = [
 ]
 const wrappers: VueWrapper[] = []
 
-async function mountTree(canTransition = () => true): Promise<{ wrapper: VueWrapper; store: ReturnType<typeof useWorkspaceStore> }> {
+async function mountTree(canDiscard: (ids?: readonly string[]) => boolean = () => true): Promise<{ wrapper: VueWrapper; store: ReturnType<typeof useWorkspaceStore> }> {
   const pinia = createPinia()
   setActivePinia(pinia)
   const store = useWorkspaceStore()
@@ -54,7 +54,7 @@ async function mountTree(canTransition = () => true): Promise<{ wrapper: VueWrap
     attachTo: document.body,
     global: {
       plugins: [pinia, [PrimeVue, { unstyled: true }]],
-      provide: { [UnsavedGuardKey as symbol]: { canTransition, runGuarded: (action: () => unknown) => canTransition() ? action() : undefined } },
+      provide: { [UnsavedGuardKey as symbol]: { canDiscard, runGuarded: (action: () => unknown, ids?: readonly string[]) => canDiscard(ids) ? action() : undefined } },
     },
   })
   wrappers.push(wrapper)
@@ -155,7 +155,7 @@ describe('binder tree', () => {
     await button.trigger('click')
 
     expect(store.openDocumentIds).toEqual([chapterId, notesId])
-    expect(canTransition).toHaveBeenCalledOnce()
+    expect(canTransition).not.toHaveBeenCalled()
   })
 
   test('keeps_focus_in_the_rename_input_while_typing_a_title', async () => {
@@ -277,7 +277,7 @@ describe('binder tree', () => {
     expect(store.activeItemId).toBeNull()
   })
 
-  test('does_not_restore_trash_when_the_unsaved_guard_declines', async () => {
+  test('restores_trash_without_a_discard_prompt_because_no_session_is_removed', async () => {
     const { wrapper, store } = await mountTree(() => false)
     const restore = vi.spyOn(store, 'restoreItem').mockResolvedValue()
     store.trashedItems = [{ ...originalItems[2]!, trashedAt: stamp }]
@@ -285,7 +285,24 @@ describe('binder tree', () => {
 
     await wrapper.get(`button[aria-label="Restore Research Notes"]`).trigger('click')
 
-    expect(restore).not.toHaveBeenCalled()
+    expect(restore).toHaveBeenCalledWith(notesId)
+  })
+
+  test('guards_only_the_replaced_tab_and_all_documents_in_a_trashed_subtree', async () => {
+    // Catches global guards blocking unrelated edits and subtree trash silently dropping descendants.
+    const canDiscard = vi.fn((ids?: readonly string[]) => !ids?.includes(chapterId))
+    const { wrapper, store } = await mountTree(canDiscard)
+    store.$patch({ openDocumentIds: [chapterId], activeTabId: chapterId })
+    await wrapper.get(`[data-item-id="${notesId}"]`).trigger('click')
+    expect(canDiscard).toHaveBeenLastCalledWith([chapterId])
+    expect(store.openDocumentIds).toEqual([chapterId])
+    await wrapper.get(`[data-item-id="${folderId}"]`).trigger('click')
+    expect(store.activeItemId).toBe(folderId)
+    const trash = vi.spyOn(binderApi, 'trash')
+    await wrapper.get('[aria-label="Move selected item to Trash"]').trigger('click')
+    expect(canDiscard).toHaveBeenLastCalledWith([chapterId])
+    expect(trash).not.toHaveBeenCalled()
+    expect(store.items.some((candidate) => candidate.id === chapterId)).toBe(true)
   })
 
   test('toggles_folders_with_a_disclosure_button_and_drops_inside_them', async () => {
@@ -318,13 +335,13 @@ describe('binder tree', () => {
     vi.spyOn(documentApi, 'get').mockResolvedValue(current)
     const save = vi.spyOn(documentApi, 'save').mockImplementation(async (_id, input) => ({ ...current, ...input, contentText: 'Changed', revision: 4 }))
     await documents.load(chapterId)
-    documents.setNotes('Unsaved note')
+    documents.setNotes(chapterId, 'Unsaved note')
 
     await workspace.renameItem(chapterId, 'Opening')
 
     expect(save).toHaveBeenCalledWith(chapterId, expect.objectContaining({ title: 'Opening', notesText: 'Unsaved note', expectedRevision: 3 }))
-    expect(documents.title).toBe('Opening')
-    expect(documents.revision).toBe(4)
+    expect(documents.sessionFor(chapterId)?.title).toBe('Opening')
+    expect(documents.sessionFor(chapterId)?.revision).toBe(4)
     expect(workspace.items.find((candidate) => candidate.id === chapterId)?.title).toBe('Opening')
   })
 

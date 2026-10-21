@@ -9,7 +9,7 @@ import { useWorkspaceStore } from '../../stores/workspace.js'
 import BinderToolbar from './BinderToolbar.vue'
 import BinderTreeItem from './BinderTreeItem.vue'
 import { useDebouncedSearch } from './useDebouncedSearch.js'
-import { createMoveIntent, useBinderMove } from './useBinderMove.js'
+import { useBinderMove } from './useBinderMove.js'
 
 const store = useWorkspaceStore()
 const unsavedGuard = useProvidedUnsavedGuard()
@@ -70,15 +70,17 @@ async function focusItem(id: string): Promise<void> {
 }
 
 function selectItem(item: BinderItemDto): void {
-  if (store.activeItemId !== item.id && !unsavedGuard.canTransition()) return
-  if (item.kind === 'document') store.replaceActiveDocument(item.id)
+  if (item.kind === 'document') {
+    const removedIds = store.openDocumentIds.includes(item.id) || !store.activeTabId ? [] : [store.activeTabId]
+    if (!unsavedGuard.canDiscard(removedIds)) return
+    store.replaceActiveDocument(item.id)
+  }
   else store.activeItemId = item.id
   focusedId.value = item.id
   store.activePanel = 'editor'
 }
 
 function openNewTab(item: BinderItemDto): void {
-  if (store.activeItemId !== item.id && !unsavedGuard.canTransition()) return
   store.openDocumentInNewTab(item.id)
   focusedId.value = item.id
 }
@@ -150,7 +152,7 @@ async function handleKeydown(event: KeyboardEvent, item: BinderItemDto): Promise
     editingId.value = item.id
   } else if (event.key === 'Delete') {
     event.preventDefault()
-    if (unsavedGuard.canTransition()) await store.trashItem(item.id)
+    if (unsavedGuard.canDiscard(store.documentIdsInSubtree(item.id))) await store.trashItem(item.id)
   } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
     const key = event.key.toLocaleLowerCase()
     const match = [...visibleItems.value.slice(index + 1), ...visibleItems.value.slice(0, index + 1)].find(
@@ -189,7 +191,8 @@ function parentForNewItem(): string | null {
 }
 
 async function add(kind: 'folder' | 'document'): Promise<void> {
-  if (!unsavedGuard.canTransition()) return
+  const removedIds = kind === 'document' && store.activeTabId ? [store.activeTabId] : []
+  if (!unsavedGuard.canDiscard(removedIds)) return
   const parentId = parentForNewItem()
   if (parentId) expandedIds.value = new Set(expandedIds.value).add(parentId)
   await store.createItem(kind, parentId)
@@ -201,7 +204,7 @@ async function add(kind: 'folder' | 'document'): Promise<void> {
 }
 
 async function trashSelected(): Promise<void> {
-  if (!store.activeItemId || !unsavedGuard.canTransition()) return
+  if (!store.activeItemId || !unsavedGuard.canDiscard(store.documentIdsInSubtree(store.activeItemId))) return
   await store.trashItem(store.activeItemId)
 }
 
@@ -240,7 +243,7 @@ async function handleDrop(event: DragEvent, target: BinderItemDto): Promise<void
 }
 
 async function restore(itemId: string): Promise<void> {
-  if (unsavedGuard.canTransition()) await store.restoreItem(itemId)
+  await store.restoreItem(itemId)
 }
 </script>
 

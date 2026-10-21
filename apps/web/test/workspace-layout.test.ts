@@ -6,6 +6,8 @@ import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
+import { binderApi } from '../src/api/binder.js'
+import { documentApi } from '../src/api/documents.js'
 import WorkspaceView from '../src/views/WorkspaceView.vue'
 import DocumentEditor from '../src/features/editor/DocumentEditor.vue'
 import { useDocumentStore } from '../src/stores/document.js'
@@ -16,6 +18,8 @@ const projectId = '11111111-1111-4111-8111-111111111111'
 const nextProjectId = '44444444-4444-4444-8444-444444444444'
 const nextDocumentId = '66666666-6666-4666-8666-666666666666'
 const researchDocumentId = '77777777-7777-4777-8777-777777777777'
+const chapterId = '33333333-3333-4333-8333-333333333333'
+const folderId = '22222222-2222-4222-8222-222222222222'
 
 function projectResponse(id = projectId): Response {
   return Response.json({
@@ -141,6 +145,224 @@ afterEach(() => {
 })
 
 describe('workspace layout', () => {
+  async function splitWorkspace(): Promise<VueWrapper> {
+    const wrapper = await mountWorkspaceWithTwoDocuments()
+    await wrapper.get('[aria-label="Open Research Notes in new tab"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[aria-label="Split editor vertically"]').trigger('click')
+    await flushPromises()
+    return wrapper
+  }
+
+  test('renders_two_editable_documents_and_switches_orientation_without_losing_buffers', async () => {
+    // Catches missing split wiring and orientation changes recreating document buffers.
+    const wrapper = await splitWorkspace()
+    expect(wrapper.findAll('[contenteditable="true"]')).toHaveLength(2)
+    expect(wrapper.get('[aria-label="Chapter One document editor"]').attributes('contenteditable')).toBe('true')
+    expect(wrapper.get('[aria-label="Research Notes document editor"]').attributes('contenteditable')).toBe('true')
+    for (const [label, prose] of [['Chapter One', 'New chapter prose'], ['Research Notes', 'New research prose']]) {
+      const editable = wrapper.get(`[aria-label="${label} document editor"]`)
+      editable.get('p').element.textContent = prose!
+      await editable.trigger('input')
+      await flushPromises()
+    }
+    expect(useDocumentStore().sessionFor(chapterId)?.contentText).toBe('New chapter prose')
+    expect(useDocumentStore().sessionFor(researchDocumentId)?.contentText).toBe('New research prose')
+    await wrapper.get(`[data-document-pane="${chapterId}"] [aria-label="Document title"]`).setValue('Opening draft')
+    await wrapper.get('[aria-label="Split editor horizontally"]').trigger('click')
+    expect(useWorkspaceStore().splitOrientation).toBe('horizontal')
+    expect(wrapper.findAll('[contenteditable="true"]')).toHaveLength(2)
+    expect(useDocumentStore().sessionFor(chapterId)?.title).toBe('Opening draft')
+    const results = await axeCore.run(document.body, { rules: { 'color-contrast': { enabled: false }, 'color-contrast-enhanced': { enabled: false } } })
+    expect(results.violations).toEqual([])
+  })
+
+  test('routes_toolbar_save_notes_status_and_compile_to_the_focused_session', async () => {
+    // Catches toolbar and inspector commands accidentally targeting the last-loaded document.
+    const wrapper = await splitWorkspace()
+    const documents = useDocumentStore()
+    const chapter = wrapper.get(`[data-document-pane="${chapterId}"]`)
+    await chapter.get('[aria-label="Document title"]').trigger('focusin')
+    await chapter.get('[aria-label="Document title"]').setValue('Opening draft')
+    await wrapper.get('[aria-label="Document notes"]').setValue('Chapter note')
+    expect(documents.sessionFor(chapterId)?.notesText).toBe('Chapter note')
+    expect(documents.sessionFor(researchDocumentId)?.notesText).toBe('')
+    const editable = chapter.get('[contenteditable="true"]')
+    editable.get('p').element.textContent = 'One two three four'
+    await editable.trigger('input')
+    await flushPromises()
+    expect(wrapper.get('footer').text()).toContain('Unsaved')
+    expect(wrapper.get('footer').text()).toContain('4 words')
+    const progress = wrapper.get('[aria-label="Writing progress settings"]')
+    await progress.trigger('mouseenter')
+    expect(wrapper.get('[role="tooltip"]').text()).toContain('102 words')
+    await progress.trigger('mouseleave')
+    await wrapper.get('[aria-label="Compile"]').trigger('click')
+    expect(document.querySelector('[aria-label="Save before compile"]')).not.toBeNull()
+    await wrapper.get(`[data-document-pane="${researchDocumentId}"] [aria-label="Document title"]`).trigger('focusin')
+    await nextTick()
+    expect(wrapper.get('footer').text()).toContain('Research Notes')
+    expect(wrapper.get('footer').text()).toContain('2 words')
+    expect(document.querySelector('[aria-label="Save before compile"]')).toBeNull()
+    expect(wrapper.get('[aria-label="Save document"]').attributes()).toHaveProperty('disabled')
+    await chapter.get('[aria-label="Document title"]').trigger('focusin')
+    await wrapper.get('[aria-label="Save document"]').trigger('click')
+    await flushPromises()
+    const puts = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'PUT')
+    expect(puts).toHaveLength(1)
+    expect(String(puts[0]?.[0])).toBe(`/api/documents/${chapterId}`)
+    expect(JSON.parse(String(puts[0]?.[1]?.body))).toMatchObject({ title: 'Opening draft', notesText: 'Chapter note' })
+  })
+
+  test('selecting_a_third_tab_displaces_only_the_focused_pane_and_retains_its_dirty_session', async () => {
+    const wrapper = await splitWorkspace()
+    const workspace = useWorkspaceStore()
+    const documents = useDocumentStore()
+    workspace.items.push({ ...workspace.items[1]!, id: nextDocumentId, title: 'Chapter Two', position: 2 })
+    await wrapper.get(`[data-document-pane="${researchDocumentId}"] [aria-label="Document title"]`).setValue('Local research')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    workspace.openDocumentInNewTab(nextDocumentId)
+    await flushPromises()
+    expect(workspace.splitDocumentIds).toEqual([nextDocumentId, chapterId])
+    expect(wrapper.findAll('[data-document-pane]').map((pane) => pane.attributes('data-document-pane'))).toEqual([nextDocumentId, chapterId])
+    expect(documents.sessionFor(researchDocumentId)?.title).toBe('Local research')
+    await wrapper.get(`[data-tab-id="${researchDocumentId}"] .editor-tab-title`).trigger('click')
+    expect(workspace.splitDocumentIds).toEqual([researchDocumentId, chapterId])
+    expect(confirm).not.toHaveBeenCalled()
+    await wrapper.get('[aria-label="Exit split view"]').trigger('click')
+    expect(workspace.openDocumentIds).toEqual([chapterId, researchDocumentId, nextDocumentId])
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(1)
+  })
+
+  test.each([chapterId, researchDocumentId])('closing_split_tab_%s_prompts_only_for_its_buffer_and_keeps_the_survivor', async (id) => {
+    const wrapper = await splitWorkspace()
+    const workspace = useWorkspaceStore()
+    const documents = useDocumentStore()
+    documents.setTitle(id, 'Unsaved title')
+    const before = [...workspace.splitDocumentIds]
+    const focused = workspace.activeTabId
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const close = wrapper.get(`[data-tab-id="${id}"] .editor-tab-close`)
+    await close.trigger('click')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(workspace.splitDocumentIds).toEqual(before)
+    expect(workspace.activeTabId).toBe(focused)
+    expect(documents.sessionFor(id)?.title).toBe('Unsaved title')
+    confirm.mockReturnValue(true)
+    await close.trigger('click')
+    await flushPromises()
+    const survivor = id === chapterId ? researchDocumentId : chapterId
+    expect(workspace.openDocumentIds).toEqual([survivor])
+    expect(workspace.activeTabId).toBe(survivor)
+    expect(workspace.isSplit).toBe(false)
+    expect(documents.sessionFor(id)).toBeUndefined()
+  })
+
+  test('suspends_and_restores_split_for_folder_phone_and_focus_mode_but_keeps_two_panes_at_900px', async () => {
+    const wrapper = await splitWorkspace()
+    const documents = useDocumentStore()
+    documents.setNotes(chapterId, 'Keep chapter notes')
+    documents.setNotes(researchDocumentId, 'Keep research notes')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get(`[data-item-id="${folderId}"]`).trigger('click')
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(0)
+    expect(useWorkspaceStore().isSplit).toBe(true)
+    await wrapper.get(`[data-tab-id="${researchDocumentId}"] .editor-tab-title`).trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(2)
+    for (const [width, count] of [[600, 1], [900, 2], [1280, 2]]) {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+      window.dispatchEvent(new Event('resize'))
+      await flushPromises()
+      expect(wrapper.findAll('[data-document-pane]')).toHaveLength(count)
+    }
+    await wrapper.get('[aria-label="Focus"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(1)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(2)
+    expect(documents.sessionFor(chapterId)?.notesText).toBe('Keep chapter notes')
+    expect(documents.sessionFor(researchDocumentId)?.notesText).toBe('Keep research notes')
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  test('close_others_prompts_once_for_removed_sessions_and_preserves_a_dirty_kept_tab', async () => {
+    const wrapper = await splitWorkspace()
+    const documents = useDocumentStore()
+    documents.setTitle(chapterId, 'Dirty chapter')
+    documents.setTitle(researchDocumentId, 'Dirty research')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get(`[data-tab-id="${researchDocumentId}"] .editor-tab-close`).trigger('click', { altKey: true })
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(useWorkspaceStore().isSplit).toBe(true)
+    documents.setTitle(chapterId, 'Chapter One')
+    confirm.mockClear()
+    await wrapper.get(`[data-tab-id="${researchDocumentId}"] .editor-tab-close`).trigger('click', { altKey: true })
+    expect(confirm).not.toHaveBeenCalled()
+    expect(useWorkspaceStore().openDocumentIds).toEqual([researchDocumentId])
+    expect(documents.sessionFor(researchDocumentId)?.title).toBe('Dirty research')
+  })
+
+  test('beforeunload_and_route_leave_protect_an_unfocused_dirty_session', async () => {
+    const wrapper = await splitWorkspace()
+    useDocumentStore().setTitle(chapterId, 'Hidden dirty chapter')
+    await wrapper.get('[aria-label="Exit split view"]').trigger('click')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    const unload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(true)
+    const router = wrapper.getComponent(WorkspaceView).vm.$router
+    await router.push('/')
+    expect(router.currentRoute.value.path).toBe(`/projects/${projectId}`)
+    expect(confirm).toHaveBeenCalledOnce()
+  })
+
+  test('trash_uses_one_prompt_for_the_whole_subtree_and_ignores_unrelated_dirty_sessions', async () => {
+    // Catches subtree trash ignoring hidden descendants or prompting for documents it preserves.
+    const wrapper = await splitWorkspace()
+    const workspace = useWorkspaceStore()
+    const documents = useDocumentStore()
+    documents.setTitle(chapterId, 'Dirty chapter')
+    documents.setTitle(researchDocumentId, 'Dirty research')
+    const folder = workspace.items[0]!
+    vi.spyOn(binderApi, 'trash').mockResolvedValue({ ...folder, trashedAt: '2026-10-21T00:00:00.000Z' })
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get(`[data-item-id="${folderId}"]`).trigger('click')
+    await wrapper.get('[aria-label="Move selected item to Trash"]').trigger('click')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(workspace.openDocumentIds).toEqual([chapterId, researchDocumentId])
+    documents.setTitle(chapterId, 'Chapter One')
+    workspace.items = workspace.items.map((item) => item.id === researchDocumentId ? { ...item, parentId: null } : item)
+    await wrapper.get('[aria-label="Move selected item to Trash"]').trigger('click')
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(documents.sessionFor(chapterId)).toBeUndefined()
+    expect(documents.sessionFor(researchDocumentId)?.title).toBe('Dirty research')
+    expect(workspace.isSplit).toBe(false)
+    expect(workspace.openDocumentIds).toEqual([researchDocumentId])
+  })
+
+  test('a_late_toolbar_save_updates_its_document_title_after_focus_moves', async () => {
+    // Catches save completion updating the newly focused Binder item instead of the saved document.
+    const wrapper = await splitWorkspace()
+    let finish!: () => void
+    vi.spyOn(documentApi, 'save').mockImplementation((id, payload) => new Promise((resolve) => {
+      finish = () => resolve({
+        id, projectId, ...payload, contentText: '', revision: 1, savedAt: '2026-10-21T00:00:00.000Z',
+      })
+    }))
+    await wrapper.get(`[data-document-pane="${researchDocumentId}"] [aria-label="Document title"]`).setValue('Saved research title')
+    await wrapper.get('[aria-label="Save document"]').trigger('click')
+    await wrapper.get(`[data-document-pane="${chapterId}"] [aria-label="Document title"]`).trigger('focusin')
+    finish()
+    await flushPromises()
+    expect(wrapper.get(`[data-tab-id="${researchDocumentId}"]`).text()).toContain('Saved research title')
+    expect(wrapper.get(`[data-tab-id="${chapterId}"]`).text()).toContain('Chapter One')
+    expect(useDocumentStore().sessionFor(researchDocumentId)?.isDirty).toBe(false)
+    expect(useWorkspaceStore().activeTabId).toBe(chapterId)
+  })
+
   test('replaces_the_active_tab_on_a_normal_binder_document_click', async () => {
     // Catches ordinary Binder navigation accumulating tabs instead of reusing the active one.
     const wrapper = await mountWorkspaceWithTwoDocuments()
@@ -152,7 +374,7 @@ describe('workspace layout', () => {
     const tabs = wrapper.get('[role="group"][aria-label="Open documents"]').findAll('[data-editor-tab]')
     expect(tabs).toHaveLength(1)
     expect(tabs[0]?.text()).toContain('Research Notes')
-    expect(useDocumentStore().documentId).toBe(researchDocumentId)
+    expect(useWorkspaceStore().activeTabId).toBe(researchDocumentId)
   })
 
   test('opens_switches_and_closes_document_tabs', async () => {
@@ -168,7 +390,7 @@ describe('workspace layout', () => {
 
     await tablist.get('button[aria-label="Chapter One"]',).trigger('click')
     await flushPromises()
-    expect(useDocumentStore().documentId).toBe('33333333-3333-4333-8333-333333333333')
+    expect(useWorkspaceStore().activeTabId).toBe('33333333-3333-4333-8333-333333333333')
 
     const chapterClose = tablist.get('button[aria-label="Close Chapter One"]')
     ;(chapterClose.element as HTMLButtonElement).focus()
@@ -177,12 +399,12 @@ describe('workspace layout', () => {
     expect(tablist.findAll('[data-editor-tab]')).toHaveLength(1)
     expect(tablist.get('button[aria-pressed="true"]').text()).toContain('Research Notes')
     expect(document.activeElement).toBe(tablist.get('button[aria-label="Research Notes"]').element)
-    expect(useDocumentStore().documentId).toBe(researchDocumentId)
+    expect(useWorkspaceStore().activeTabId).toBe(researchDocumentId)
 
     await tablist.get('button[aria-label="Close Research Notes"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[role="group"][aria-label="Open documents"]').exists()).toBe(false)
-    expect(useDocumentStore().documentId).toBeNull()
+    expect(useWorkspaceStore().activeTabId).toBeNull()
   })
 
   test('alt_clicking_a_tab_close_button_closes_every_other_tab', async () => {
@@ -197,11 +419,11 @@ describe('workspace layout', () => {
     const tabs = wrapper.get('[role="group"][aria-label="Open documents"]').findAll('[data-editor-tab]')
     expect(tabs).toHaveLength(1)
     expect(tabs[0]?.text()).toContain('Chapter One')
-    expect(useDocumentStore().documentId).toBe('33333333-3333-4333-8333-333333333333')
+    expect(useWorkspaceStore().activeTabId).toBe('33333333-3333-4333-8333-333333333333')
   })
 
-  test('keeps_tabs_and_the_dirty_buffer_when_a_tab_transition_is_declined', async () => {
-    // Catches tab activation discarding active edits when the unsaved guard declines.
+  test('switches_tabs_without_prompting_and_keeps_the_outgoing_dirty_buffer', async () => {
+    // Catches harmless tab activation prompting or discarding retained session edits.
     const wrapper = await mountWorkspaceWithTwoDocuments()
     await wrapper.get(`button[aria-label="Open Research Notes in new tab"]`).trigger('click')
     await flushPromises()
@@ -211,9 +433,9 @@ describe('workspace layout', () => {
     await wrapper.get('button[aria-label="Chapter One"]').trigger('click')
     await flushPromises()
 
-    expect(confirm).toHaveBeenCalledOnce()
-    expect(useDocumentStore().documentId).toBe(researchDocumentId)
-    expect(useDocumentStore().title).toBe('Unsorted research')
+    expect(confirm).not.toHaveBeenCalled()
+    expect(useWorkspaceStore().activeTabId).toBe(chapterId)
+    expect(useDocumentStore().sessionFor(researchDocumentId)?.title).toBe('Unsorted research')
     expect(wrapper.get('[role="group"][aria-label="Open documents"]').findAll('[data-editor-tab]')).toHaveLength(2)
   })
 
@@ -539,7 +761,7 @@ describe('workspace layout', () => {
     const wrapper = await mountWorkspace()
     const title = wrapper.get<HTMLInputElement>('[aria-label="Document title"]')
     await title.setValue('Shortcut draft')
-    expect(useDocumentStore().isDirty).toBe(true)
+    expect(useDocumentStore().hasDirtySessions()).toBe(true)
 
     const shortcut = new KeyboardEvent('keydown', {
       key: 's',
@@ -551,7 +773,7 @@ describe('workspace layout', () => {
     await flushPromises()
 
     expect(shortcut.defaultPrevented).toBe(true)
-    expect(useDocumentStore().isDirty).toBe(false)
+    expect(useDocumentStore().hasDirtySessions()).toBe(false)
   })
 
   test('opens_compile_from_the_workspace_shortcut_and_restores_focus_on_close', async () => {
@@ -767,7 +989,7 @@ describe('workspace layout', () => {
     const trigger = wrapper.get('[aria-label="Writing progress settings"]')
     await trigger.trigger('mouseenter')
     expect(wrapper.get('[role="tooltip"]').text()).toBe('100 words | 10 words')
-    useDocumentStore().setContent({ type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Saved prose and more' }] }] })
+    useDocumentStore().setContent(chapterId, { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Saved prose and more' }] }] })
     wrapper.getComponent(DocumentEditor).vm.$emit('word-count-delta', 2)
     await nextTick()
     expect(wrapper.get('[role="tooltip"]').text()).toBe('102 words | 12 words')
@@ -811,14 +1033,14 @@ describe('workspace layout', () => {
       expect(useWorkspaceStore().project?.id).toBe(nextProjectId)
       expect(useWritingProgressStore().projectId).toBe(nextProjectId)
       expect(wrapper.get('[aria-label="Document title"]').element).toHaveProperty('value', 'Chapter Two')
-      expect(useDocumentStore().isDirty).toBe(false)
+      expect(useDocumentStore().hasDirtySessions()).toBe(false)
       expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('false')
     } else {
       expect(router.currentRoute.value.params.projectId).toBe(projectId)
       expect(useWorkspaceStore().project?.id).toBe(projectId)
       expect(useWritingProgressStore().projectId).toBe(projectId)
       expect(wrapper.get('[aria-label="Document title"]').element).toHaveProperty('value', 'Unsaved chapter title')
-      expect(useDocumentStore().isDirty).toBe(true)
+      expect(useDocumentStore().hasDirtySessions()).toBe(true)
       expect(wrapper.get('[role="switch"]').attributes('aria-checked')).toBe('true')
       expect(requests.some((request) => request.includes(nextProjectId))).toBe(false)
     }
@@ -844,8 +1066,8 @@ describe('workspace layout', () => {
     expect(workspace.items).toEqual([])
     expect(workspace.trashedItems).toEqual([])
     expect(workspace.activeItemId).toBeNull()
-    expect(useDocumentStore().documentId).toBeNull()
-    expect(wrapper.find('[aria-label="Document editor"]').exists()).toBe(false)
+    expect(useWorkspaceStore().activeTabId).toBeNull()
+    expect(wrapper.find('[contenteditable="true"]').exists()).toBe(false)
     resolveNext(Response.json({ message: 'Next project unavailable' }, { status: 503 }))
     await flushPromises()
     expect(workspace.projectId).toBe(nextProjectId)
@@ -881,7 +1103,7 @@ describe('workspace layout', () => {
     expect(workspace.activeItemId).toBe(selected)
     expect(workspace.errorMessage).toBe('Refresh unavailable')
     expect(wrapper.get('[aria-label="Document title"]').element).toHaveProperty('value', 'Still writing')
-    expect(useDocumentStore().isDirty).toBe(true)
+    expect(useDocumentStore().hasDirtySessions()).toBe(true)
   })
 
   test('refreshes the saved project aggregate after create, trash, restore, and permanent delete', async () => {

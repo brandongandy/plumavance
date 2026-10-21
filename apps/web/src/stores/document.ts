@@ -6,7 +6,7 @@ import type {
   SnapshotSummaryDto,
 } from '@pluma/shared'
 import { defineStore } from 'pinia'
-import { computed, reactive, shallowRef } from 'vue'
+import { computed, reactive } from 'vue'
 
 import { ApiRequestError } from '../api/client.js'
 import { documentApi } from '../api/documents.js'
@@ -100,11 +100,6 @@ export const useDocumentStore = defineStore('document', () => {
   const sessions = reactive(new Map<string, DocumentSession>())
   const requests = new WeakMap<DocumentSession, SessionRequests>()
 
-  // Deprecated compatibility facade. Remove after WorkspaceView and SnapshotList migrate.
-  const legacyActiveId = shallowRef<string | null>(null)
-  const emptySession = createSession('')
-  const legacySession = computed(() => sessionFor(legacyActiveId.value ?? '') ?? emptySession)
-
   function sessionFor(id: string): DocumentSession | undefined {
     return sessions.get(id)
   }
@@ -140,12 +135,7 @@ export const useDocumentStore = defineStore('document', () => {
     session.errorMessage = ''
   }
 
-  function load(id: string, force?: boolean): Promise<boolean>
-  /** @deprecated Pass a force boolean; dirty navigation is handled by callers. */
-  function load(id: string, confirmDiscard: () => boolean, force?: boolean): Promise<boolean>
-  async function load(id: string, forceOrConfirm: boolean | (() => boolean) = false, legacyForce = false): Promise<boolean> {
-    legacyActiveId.value = id
-    const force = typeof forceOrConfirm === 'boolean' ? forceOrConfirm : legacyForce
+  async function load(id: string, force = false): Promise<boolean> {
     const session = ensureSession(id)
     if (!force && session.savedBuffer) return true
     const state = requests.get(session)!
@@ -175,12 +165,10 @@ export const useDocumentStore = defineStore('document', () => {
     const session = sessionFor(id)
     if (session) requests.get(session)!.generation += 1
     sessions.delete(id)
-    if (legacyActiveId.value === id) legacyActiveId.value = null
   }
 
   function clear(): void {
     for (const id of sessions.keys()) discard(id)
-    legacyActiveId.value = null
   }
 
   function dirtyDocumentIds(ids: readonly string[] = [...sessions.keys()]): string[] {
@@ -191,7 +179,7 @@ export const useDocumentStore = defineStore('document', () => {
     return dirtyDocumentIds(ids).length > 0
   }
 
-  async function loadSnapshots(id = legacyActiveId.value ?? ''): Promise<void> {
+  async function loadSnapshots(id: string): Promise<void> {
     const session = sessionFor(id)
     if (!session) return
     const state = requests.get(session)!
@@ -222,15 +210,11 @@ export const useDocumentStore = defineStore('document', () => {
     return () => isCurrent(session, generation) && state.snapshotMutations.get(key) === sequence
   }
 
-  function takeSnapshot(id: string, name: string): Promise<boolean>
-  /** @deprecated Pass the document ID first. */
-  function takeSnapshot(name: string): Promise<boolean>
-  async function takeSnapshot(idOrName: string, name?: string): Promise<boolean> {
-    const id = name === undefined ? legacyActiveId.value ?? '' : idOrName
+  async function takeSnapshot(id: string, name: string): Promise<boolean> {
     const session = sessionFor(id)
     if (!session || session.isDirty || session.loading || session.operation === 'saving') return false
     const current = snapshotMutation(session, 'create')
-    const trimmed = (name ?? idOrName).trim()
+    const trimmed = name.trim()
     const snapshot = await snapshotApi.create(id, trimmed || undefined)
     if (!current() || snapshot.documentId !== id) return false
     requests.get(session)!.snapshotList += 1
@@ -238,27 +222,17 @@ export const useDocumentStore = defineStore('document', () => {
     return true
   }
 
-  function renameSnapshot(id: string, snapshotId: string, name: string): Promise<void>
-  /** @deprecated Pass the document ID first. */
-  function renameSnapshot(snapshotId: string, name: string): Promise<void>
-  async function renameSnapshot(idOrSnapshot: string, snapshotOrName: string, name?: string): Promise<void> {
-    const id = name === undefined ? legacyActiveId.value ?? '' : idOrSnapshot
-    const snapshotId = name === undefined ? idOrSnapshot : snapshotOrName
+  async function renameSnapshot(id: string, snapshotId: string, name: string): Promise<void> {
     const session = sessionFor(id)
     if (!session || !ownsSnapshot(session, snapshotId)) return
     const current = snapshotMutation(session, snapshotId)
-    const renamed = await snapshotApi.rename(snapshotId, (name ?? snapshotOrName).trim())
+    const renamed = await snapshotApi.rename(snapshotId, name.trim())
     if (!current() || renamed.documentId !== id) return
     requests.get(session)!.snapshotList += 1
     session.snapshots = session.snapshots.map((snapshot) => snapshot.id === renamed.id ? renamed : snapshot)
   }
 
-  function loadSnapshotDetail(id: string, snapshotId: string): Promise<SnapshotDto | undefined>
-  /** @deprecated Pass the document ID first. */
-  function loadSnapshotDetail(snapshotId: string): Promise<SnapshotDto | undefined>
-  async function loadSnapshotDetail(idOrSnapshot: string, explicitSnapshot?: string): Promise<SnapshotDto | undefined> {
-    const id = explicitSnapshot === undefined ? legacyActiveId.value ?? '' : idOrSnapshot
-    const snapshotId = explicitSnapshot ?? idOrSnapshot
+  async function loadSnapshotDetail(id: string, snapshotId: string): Promise<SnapshotDto | undefined> {
     const session = sessionFor(id)
     if (!session || !ownsSnapshot(session, snapshotId)) return undefined
     const state = requests.get(session)!
@@ -276,12 +250,7 @@ export const useDocumentStore = defineStore('document', () => {
     }
   }
 
-  function restoreSnapshot(id: string, snapshotId: string): Promise<boolean>
-  /** @deprecated Pass the document ID first. */
-  function restoreSnapshot(snapshotId: string): Promise<boolean>
-  async function restoreSnapshot(idOrSnapshot: string, explicitSnapshot?: string): Promise<boolean> {
-    const id = explicitSnapshot === undefined ? legacyActiveId.value ?? '' : idOrSnapshot
-    const snapshotId = explicitSnapshot ?? idOrSnapshot
+  async function restoreSnapshot(id: string, snapshotId: string): Promise<boolean> {
     const session = sessionFor(id)
     if (!session || session.isDirty || session.loading || session.operation === 'saving' || !ownsSnapshot(session, snapshotId)) return false
     const state = requests.get(session)!
@@ -303,12 +272,7 @@ export const useDocumentStore = defineStore('document', () => {
     }
   }
 
-  function deleteSnapshot(id: string, snapshotId: string): Promise<void>
-  /** @deprecated Pass the document ID first. */
-  function deleteSnapshot(snapshotId: string): Promise<void>
-  async function deleteSnapshot(idOrSnapshot: string, explicitSnapshot?: string): Promise<void> {
-    const id = explicitSnapshot === undefined ? legacyActiveId.value ?? '' : idOrSnapshot
-    const snapshotId = explicitSnapshot ?? idOrSnapshot
+  async function deleteSnapshot(id: string, snapshotId: string): Promise<void> {
     const session = sessionFor(id)
     if (!session || !ownsSnapshot(session, snapshotId)) return
     const current = snapshotMutation(session, snapshotId)
@@ -318,33 +282,24 @@ export const useDocumentStore = defineStore('document', () => {
     session.snapshots = session.snapshots.filter((snapshot) => snapshot.id !== snapshotId)
   }
 
-  function setTitle(id: string, value: string): void
-  /** @deprecated Pass the document ID first. */
-  function setTitle(value: string): void
-  function setTitle(idOrValue: string, value?: string): void {
-    const session = sessionFor(value === undefined ? legacyActiveId.value ?? '' : idOrValue)
+  function setTitle(id: string, value: string): void {
+    const session = sessionFor(id)
     if (!session) return
-    session.title = value ?? idOrValue
+    session.title = value
     if (session.operation === 'failed') session.operation = 'idle'
   }
 
-  function setContent(id: string, value: EditorDocument): void
-  /** @deprecated Pass the document ID first. */
-  function setContent(value: EditorDocument): void
-  function setContent(idOrValue: string | EditorDocument, value?: EditorDocument): void {
-    const session = sessionFor(typeof idOrValue === 'string' ? idOrValue : legacyActiveId.value ?? '')
+  function setContent(id: string, value: EditorDocument): void {
+    const session = sessionFor(id)
     if (!session) return
-    session.contentJson = value ?? idOrValue as EditorDocument
+    session.contentJson = value
     if (session.operation === 'failed') session.operation = 'idle'
   }
 
-  function setNotes(id: string, value: string): void
-  /** @deprecated Pass the document ID first. */
-  function setNotes(value: string): void
-  function setNotes(idOrValue: string, value?: string): void {
-    const session = sessionFor(value === undefined ? legacyActiveId.value ?? '' : idOrValue)
+  function setNotes(id: string, value: string): void {
+    const session = sessionFor(id)
     if (!session) return
-    session.notesText = value ?? idOrValue
+    session.notesText = value
     if (session.operation === 'failed') session.operation = 'idle'
   }
 
@@ -353,7 +308,7 @@ export const useDocumentStore = defineStore('document', () => {
     if (session) session.scrollTop = value
   }
 
-  async function save(id = legacyActiveId.value ?? ''): Promise<boolean> {
+  async function save(id: string): Promise<boolean> {
     const session = sessionFor(id)
     if (!session || session.loading || !session.savedBuffer || session.operation === 'saving') return false
     if (!session.title.trim()) {
@@ -404,11 +359,11 @@ export const useDocumentStore = defineStore('document', () => {
     }
   }
 
-  async function reloadServerCopy(id = legacyActiveId.value ?? ''): Promise<boolean> {
+  async function reloadServerCopy(id: string): Promise<boolean> {
     return sessionFor(id) ? load(id, true) : false
   }
 
-  async function keepMine(id = legacyActiveId.value ?? ''): Promise<boolean> {
+  async function keepMine(id: string): Promise<boolean> {
     const session = sessionFor(id)
     if (!session?.conflict) return false
     session.revision = session.conflict.currentRevision
@@ -439,22 +394,5 @@ export const useDocumentStore = defineStore('document', () => {
     loadSnapshotDetail,
     restoreSnapshot,
     deleteSnapshot,
-    // Deprecated singleton facade: no independent document state lives here.
-    legacyActiveId,
-    documentId: computed(() => legacySession.value.savedBuffer ? legacyActiveId.value : null),
-    title: computed(() => legacySession.value.title),
-    contentJson: computed(() => legacySession.value.contentJson),
-    contentText: computed(() => legacySession.value.contentText),
-    notesText: computed(() => legacySession.value.notesText),
-    revision: computed(() => legacySession.value.revision),
-    savedAt: computed(() => legacySession.value.savedAt),
-    counts: computed(() => legacySession.value.counts),
-    savedWordCount: computed(() => legacySession.value.savedWordCount),
-    isDirty: computed(() => legacySession.value.isDirty),
-    saveState: computed(() => legacySession.value.saveState),
-    conflict: computed(() => legacySession.value.conflict),
-    errorMessage: computed(() => legacySession.value.errorMessage),
-    loading: computed(() => legacySession.value.loading),
-    snapshots: computed(() => legacySession.value.snapshots),
   }
 })

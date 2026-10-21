@@ -4,19 +4,19 @@ import { onBeforeRouteLeave } from 'vue-router'
 const promptMessage = 'You have unsaved changes. Discard them and continue?'
 
 export interface UnsavedGuard {
-  canTransition: () => boolean
-  runGuarded: <T>(action: () => T) => T | undefined
+  canDiscard: (documentIds?: readonly string[]) => boolean
+  runGuarded: <T>(action: () => T, documentIds?: readonly string[]) => T | undefined
 }
 
 export const UnsavedGuardKey: InjectionKey<UnsavedGuard> = Symbol('UnsavedGuard')
 
 export function useUnsavedGuard(
-  isDirty: () => boolean,
+  isDirty: (documentIds?: readonly string[]) => boolean,
   confirmDiscard: () => boolean = () => window.confirm(promptMessage),
 ): UnsavedGuard {
-  const canTransition = (): boolean => !isDirty() || confirmDiscard()
-  const runGuarded = <T>(action: () => T): T | undefined =>
-    canTransition() ? action() : undefined
+  const canDiscard = (documentIds?: readonly string[]): boolean => !isDirty(documentIds) || confirmDiscard()
+  const runGuarded = <T>(action: () => T, documentIds?: readonly string[]): T | undefined =>
+    canDiscard(documentIds) ? action() : undefined
 
   const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
     if (!isDirty()) return
@@ -26,16 +26,16 @@ export function useUnsavedGuard(
 
   onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
   onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
-  onBeforeRouteLeave(() => canTransition())
+  onBeforeRouteLeave(() => canDiscard())
 
-  const guard = { canTransition, runGuarded }
+  const guard = { canDiscard, runGuarded }
   provide(UnsavedGuardKey, guard)
   return guard
 }
 
 export function useProvidedUnsavedGuard(): UnsavedGuard {
   return inject(UnsavedGuardKey, {
-    canTransition: () => true,
+    canDiscard: () => true,
     runGuarded: <T>(action: () => T): T => action(),
   })
 }
