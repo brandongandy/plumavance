@@ -605,15 +605,28 @@ button {
 }
 
 .editor-split-divider--vertical {
-  width: 5px;
+  width: 1px;
   align-self: stretch;
   cursor: col-resize;
 }
 
 .editor-split-divider--horizontal {
-  height: 5px;
+  height: 1px;
   align-self: stretch;
   cursor: row-resize;
+}
+
+.editor-split-divider::before {
+  position: absolute;
+  content: '';
+}
+
+.editor-split-divider--vertical::before {
+  inset: 0 -4px;
+}
+
+.editor-split-divider--horizontal::before {
+  inset: -4px 0;
 }
 
 .editor-split-divider:hover,
@@ -672,8 +685,36 @@ button {
 .editor-document-pane {
   display: flex;
   height: 100%;
+  min-width: 0;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
+}
+
+.split-editor {
+  display: grid;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.split-editor.is-split .editor-document-pane.is-focused .document-header {
+  box-shadow: inset 0 2px var(--color-focus);
+}
+
+.split-editor .save-status {
+  flex-wrap: wrap;
+}
+
+.split-editor .save-status-message {
+  flex-basis: 100%;
+}
+
+.split-editor .workspace-message {
+  overflow: auto;
 }
 
 .document-header {
