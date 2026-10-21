@@ -283,6 +283,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const approvedBuffer = editableBuffer(replacementSession)
     const approvedSavedBuffer = replacementSession?.savedBuffer
     const approvedDirty = replacementSession?.isDirty
+    const approvedPendingSave = replacementSession?.pendingSave
     const title = kind === 'folder' ? 'Untitled Folder' : 'Untitled Document'
     const created = await binderApi.create(creatingProjectId, { kind, parentId, title })
     if (projectId.value !== creatingProjectId || projectEpoch !== creatingEpoch) return
@@ -291,6 +292,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       && editableBuffer(replacementSession) === approvedBuffer
       && replacementSession?.savedBuffer === approvedSavedBuffer
       && replacementSession?.isDirty === approvedDirty
+      && replacementSession?.pendingSave === approvedPendingSave
     items.value = applyMove([...items.value.filter((item) => item.id !== created.id), created], {
       itemId: created.id,
       parentId: created.parentId,
@@ -305,6 +307,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function renameItem(id: string, title: string): Promise<void> {
+    const epoch = projectEpoch
     const item = items.value.find((candidate) => candidate.id === id)
     const trimmed = title.trim()
     if (!item || !trimmed) return
@@ -316,7 +319,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
     const documents = useDocumentStore()
     let saved = false
-    if (documents.sessionFor(id)) {
+    const session = documents.sessionFor(id)
+    if (session) {
+      if (session.loading || !session.savedBuffer) {
+        const loaded = await documents.load(id)
+        if (projectEpoch !== epoch || documents.sessionFor(id) !== session) return
+        if (!loaded) {
+          errorMessage.value = session.errorMessage || 'The document must load before it can be renamed.'
+          return
+        }
+      }
       documents.setTitle(id, trimmed)
       saved = await documents.save(id)
     } else {
@@ -329,7 +341,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       })
       saved = true
     }
-    if (saved) {
+    if (saved && projectEpoch === epoch) {
       items.value = items.value.map((candidate) => candidate.id === id ? { ...candidate, title: trimmed } : candidate)
       await useWritingProgressStore().refresh()
     }
@@ -377,6 +389,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const session = documents.sessionFor(documentId)
       return [documentId, {
         session, buffer: editableBuffer(session), savedBuffer: session?.savedBuffer, isDirty: session?.isDirty,
+        pendingSave: session?.pendingSave,
       }] as const
     }))
     errorMessage.value = ''
@@ -388,9 +401,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const changedDirtyIds = targetIds.filter((documentId) => {
         const session = documents.sessionFor(documentId)
         const original = approved.get(documentId)
-        return session?.isDirty && (
+        return session?.needsDiscardConfirmation && (
           session !== original?.session || editableBuffer(session) !== original?.buffer
           || session.savedBuffer !== original?.savedBuffer || session.isDirty !== original?.isDirty
+          || session.pendingSave !== original?.pendingSave
         )
       })
       const retainedIds = new Set(changedDirtyIds.length && !canDiscardChanges(changedDirtyIds) ? changedDirtyIds : [])
@@ -415,7 +429,6 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
   async function restoreItem(id: string): Promise<void> {
     const epoch = projectEpoch
-    const selected = activeItemId.value
     errorMessage.value = ''
     try {
       try {
@@ -427,6 +440,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (projectEpoch !== epoch) return
       const detail = await binderApi.getProject(projectId.value)
       if (projectEpoch !== epoch) return
+      const selected = activeItemId.value
       project.value = detail.project
       items.value = detail.items
       trashedItems.value = detail.trashedItems

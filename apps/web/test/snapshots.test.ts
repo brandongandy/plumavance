@@ -56,19 +56,29 @@ async function mountedInspector() {
   const pinia = createPinia()
   setActivePinia(pinia)
   const requests: Array<{ path: string; method: string; body?: unknown }> = []
+  let snapshots = [snapshotSummaryFixture]
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input)
     const method = init?.method ?? 'GET'
     requests.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
     if (path === `/api/documents/${documentId}` && method === 'GET') return Response.json(documentFixture())
     if (path === `/api/documents/${documentId}` && method === 'PUT') return Response.json(documentFixture('Unsaved prose', 3))
-    if (path.endsWith('/snapshots') && method === 'GET') return Response.json([snapshotSummaryFixture])
+    if (path.endsWith('/snapshots') && method === 'GET') return Response.json(snapshots)
     if (path.endsWith('/snapshots') && method === 'POST') {
-      return Response.json({ ...snapshotSummaryFixture, id: '44444444-4444-4444-8444-444444444444', name: 'Milestone' }, { status: 201 })
+      const created = { ...snapshotSummaryFixture, id: '44444444-4444-4444-8444-444444444444', name: 'Milestone' }
+      snapshots = [created, ...snapshots]
+      return Response.json(created, { status: 201 })
     }
     if (path.endsWith('/restore')) return Response.json(documentFixture('Earlier prose', 3))
-    if (method === 'PATCH') return Response.json({ ...snapshotSummaryFixture, name: 'Renamed' })
-    if (method === 'DELETE') return new Response(null, { status: 204 })
+    if (method === 'PATCH') {
+      const renamed = { ...snapshotSummaryFixture, name: 'Renamed' }
+      snapshots = snapshots.map((snapshot) => snapshot.id === renamed.id ? renamed : snapshot)
+      return Response.json(renamed)
+    }
+    if (method === 'DELETE') {
+      snapshots = snapshots.filter((snapshot) => !path.endsWith(`/${snapshot.id}`))
+      return new Response(null, { status: 204 })
+    }
     return Response.json(snapshotFixture)
   })
   vi.stubGlobal('fetch', fetchMock)
@@ -85,6 +95,28 @@ async function mountedInspector() {
 }
 
 describe('snapshot inspector', () => {
+  test.each([true, false])('reconciles_the_full_snapshot_list_after_create_success_%s_with_initial_list_pending', async (succeeds) => {
+    setActivePinia(createPinia())
+    const created = { ...snapshotSummaryFixture, id: 'new-snapshot', name: 'Newest' }
+    let finishInitial!: (value: SnapshotSummaryDto[]) => void
+    vi.spyOn(documentApi, 'get').mockResolvedValue(documentFixture())
+    const list = vi.spyOn(snapshotApi, 'list')
+      .mockImplementationOnce(() => new Promise((resolve) => { finishInitial = resolve }))
+      .mockResolvedValue(succeeds ? [created, snapshotSummaryFixture] : [snapshotSummaryFixture])
+    const create = vi.spyOn(snapshotApi, 'create')
+    if (succeeds) create.mockResolvedValue(created)
+    else create.mockRejectedValue(new Error('Snapshot failed'))
+    const store = useDocumentStore()
+    await store.load(documentId)
+    if (succeeds) expect(await store.takeSnapshot(documentId, 'Newest')).toBe(true)
+    else await expect(store.takeSnapshot(documentId, 'Newest')).rejects.toThrow('Snapshot failed')
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(store.sessionFor(documentId)?.snapshots).toEqual(succeeds ? [created, snapshotSummaryFixture] : [snapshotSummaryFixture])
+    finishInitial([snapshotSummaryFixture])
+    await flushPromises()
+    expect(store.sessionFor(documentId)?.snapshots).toEqual(succeeds ? [created, snapshotSummaryFixture] : [snapshotSummaryFixture])
+  })
+
   test('changing_the_focused_document_closes_dialogs_and_ignores_late_snapshot_details', async () => {
     // Catches stale snapshot previews and confirmation dialogs leaking into the next focused document.
     const { wrapper, store } = await mountedInspector()
@@ -114,12 +146,20 @@ describe('snapshot inspector', () => {
     setActivePinia(createPinia())
     const secondDocumentId = '44444444-4444-4444-8444-444444444444'
     const createdSnapshot = { ...snapshotSummaryFixture, id: '55555555-5555-4555-8555-555555555555', name: 'Milestone' }
+    let snapshots = [snapshotSummaryFixture]
     vi.spyOn(documentApi, 'get').mockImplementation(async (id) => ({ ...documentFixture(), id }))
-    vi.spyOn(snapshotApi, 'list').mockImplementation(async (id) => id === documentId ? [snapshotSummaryFixture] : [])
-    const create = vi.spyOn(snapshotApi, 'create').mockResolvedValue(createdSnapshot)
-    const rename = vi.spyOn(snapshotApi, 'rename').mockResolvedValue({ ...createdSnapshot, name: 'Renamed' })
+    vi.spyOn(snapshotApi, 'list').mockImplementation(async (id) => id === documentId ? snapshots : [])
+    const create = vi.spyOn(snapshotApi, 'create').mockImplementation(async () => {
+      snapshots = [createdSnapshot, ...snapshots]
+      return createdSnapshot
+    })
+    const rename = vi.spyOn(snapshotApi, 'rename').mockImplementation(async () => {
+      const renamed = { ...createdSnapshot, name: 'Renamed' }
+      snapshots = snapshots.map((snapshot) => snapshot.id === renamed.id ? renamed : snapshot)
+      return renamed
+    })
     const restore = vi.spyOn(snapshotApi, 'restore').mockResolvedValue(documentFixture('Restored prose', 3))
-    const remove = vi.spyOn(snapshotApi, 'delete').mockResolvedValue(undefined)
+    const remove = vi.spyOn(snapshotApi, 'delete').mockImplementation(async (id) => { snapshots = snapshots.filter((snapshot) => snapshot.id !== id) })
     const store = useDocumentStore()
     await Promise.all([store.load(documentId), store.load(secondDocumentId)])
     await flushPromises()

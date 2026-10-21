@@ -35,6 +35,7 @@ export interface DocumentSession {
   revision: number
   savedAt: string
   savedBuffer: SavedBuffer | null
+  pendingSave: SavedBuffer | null
   operation: 'idle' | 'saving' | 'failed' | 'conflict'
   conflict: ConflictMetadata | null
   errorMessage: string
@@ -42,6 +43,7 @@ export interface DocumentSession {
   snapshots: SnapshotSummaryDto[]
   scrollTop: number
   readonly isDirty: boolean
+  readonly needsDiscardConfirmation: boolean
   readonly contentText: string
   readonly counts: { words: number; characters: number }
   readonly savedWordCount: number
@@ -50,18 +52,23 @@ export interface DocumentSession {
 
 interface SessionRequests {
   generation: number
+  load?: Promise<boolean>
   write: number
   snapshotList: number
   snapshotDetail: number
   snapshotMutations: Map<string, number>
 }
 
-function bufferOf(document: DocumentDto): SavedBuffer {
+function bufferOf(document: SavedBuffer): SavedBuffer {
   return { title: document.title, contentJson: document.contentJson, notesText: document.notesText }
 }
 
 function sameContent(left: EditorDocument, right: EditorDocument): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
+}
+
+function sameBuffer(left: SavedBuffer, right: SavedBuffer): boolean {
+  return left.title === right.title && left.notesText === right.notesText && sameContent(left.contentJson, right.contentJson)
 }
 
 function createSession(id: string): DocumentSession {
@@ -73,6 +80,7 @@ function createSession(id: string): DocumentSession {
     revision: 0,
     savedAt: '',
     savedBuffer: null as SavedBuffer | null,
+    pendingSave: null as SavedBuffer | null,
     operation: 'idle' as DocumentSession['operation'],
     conflict: null as ConflictMetadata | null,
     errorMessage: '',
@@ -81,11 +89,11 @@ function createSession(id: string): DocumentSession {
     scrollTop: 0,
     isDirty: computed(() => {
       const saved = session.savedBuffer
-      return saved !== null && (
-        session.title !== saved.title || session.notesText !== saved.notesText ||
-        !sameContent(session.contentJson, saved.contentJson)
-      )
+      return saved !== null && !sameBuffer(session, saved)
     }),
+    // An in-flight save can move the baseline away from an otherwise clean buffer.
+    needsDiscardConfirmation: computed(() => session.isDirty ||
+      (session.pendingSave !== null && !sameBuffer(session, session.pendingSave))),
     contentText: computed(() => editorText(session.contentJson)),
     counts: computed(() => countText(session.contentText)),
     savedWordCount: computed(() => session.savedBuffer
@@ -137,9 +145,23 @@ export const useDocumentStore = defineStore('document', () => {
 
   async function load(id: string, force = false): Promise<boolean> {
     const session = ensureSession(id)
+    const state = requests.get(session)!
+    if (!force && state.load) return state.load
     if (!force && session.savedBuffer) return true
+    const pending = loadSession(session)
+    state.load = pending
+    try {
+      return await pending
+    } finally {
+      if (state.load === pending) delete state.load
+    }
+  }
+
+  async function loadSession(session: DocumentSession): Promise<boolean> {
+    const id = session.documentId
     const state = requests.get(session)!
     const generation = ++state.generation
+    session.pendingSave = null
     session.loading = true
     session.errorMessage = ''
     session.operation = 'idle'
@@ -172,7 +194,7 @@ export const useDocumentStore = defineStore('document', () => {
   }
 
   function dirtyDocumentIds(ids: readonly string[] = [...sessions.keys()]): string[] {
-    return ids.filter((id) => sessionFor(id)?.isDirty)
+    return ids.filter((id) => sessionFor(id)?.needsDiscardConfirmation)
   }
 
   function hasDirtySessions(ids?: readonly string[]): boolean {
@@ -215,21 +237,29 @@ export const useDocumentStore = defineStore('document', () => {
     if (!session || session.isDirty || session.loading || session.operation === 'saving') return false
     const current = snapshotMutation(session, 'create')
     const trimmed = name.trim()
-    const snapshot = await snapshotApi.create(id, trimmed || undefined)
-    if (!current() || snapshot.documentId !== id) return false
-    requests.get(session)!.snapshotList += 1
-    session.snapshots = [snapshot, ...session.snapshots]
-    return true
+    try {
+      const snapshot = await snapshotApi.create(id, trimmed || undefined)
+      if (!current() || snapshot.documentId !== id) return false
+      session.snapshots = [snapshot, ...session.snapshots.filter((item) => item.id !== snapshot.id)]
+      return true
+    } finally {
+      // Mutations invalidate older lists, including the first list. Reconcile even
+      // on failure so existing server snapshots never disappear behind that fence.
+      if (current()) await loadSnapshots(id)
+    }
   }
 
   async function renameSnapshot(id: string, snapshotId: string, name: string): Promise<void> {
     const session = sessionFor(id)
     if (!session || !ownsSnapshot(session, snapshotId)) return
     const current = snapshotMutation(session, snapshotId)
-    const renamed = await snapshotApi.rename(snapshotId, name.trim())
-    if (!current() || renamed.documentId !== id) return
-    requests.get(session)!.snapshotList += 1
-    session.snapshots = session.snapshots.map((snapshot) => snapshot.id === renamed.id ? renamed : snapshot)
+    try {
+      const renamed = await snapshotApi.rename(snapshotId, name.trim())
+      if (!current() || renamed.documentId !== id) return
+      session.snapshots = session.snapshots.map((snapshot) => snapshot.id === renamed.id ? renamed : snapshot)
+    } finally {
+      if (current()) await loadSnapshots(id)
+    }
   }
 
   async function loadSnapshotDetail(id: string, snapshotId: string): Promise<SnapshotDto | undefined> {
@@ -276,10 +306,13 @@ export const useDocumentStore = defineStore('document', () => {
     const session = sessionFor(id)
     if (!session || !ownsSnapshot(session, snapshotId)) return
     const current = snapshotMutation(session, snapshotId)
-    await snapshotApi.delete(snapshotId)
-    if (!current()) return
-    requests.get(session)!.snapshotList += 1
-    session.snapshots = session.snapshots.filter((snapshot) => snapshot.id !== snapshotId)
+    try {
+      await snapshotApi.delete(snapshotId)
+      if (!current()) return
+      session.snapshots = session.snapshots.filter((snapshot) => snapshot.id !== snapshotId)
+    } finally {
+      if (current()) await loadSnapshots(id)
+    }
   }
 
   function setTitle(id: string, value: string): void {
@@ -323,6 +356,7 @@ export const useDocumentStore = defineStore('document', () => {
       title: session.title.trim(), contentJson: session.contentJson,
       notesText: session.notesText, expectedRevision: session.revision,
     }
+    session.pendingSave = bufferOf(payload)
     session.operation = 'saving'
     session.errorMessage = ''
     session.conflict = null
@@ -356,6 +390,8 @@ export const useDocumentStore = defineStore('document', () => {
       }
       session.errorMessage = error instanceof Error ? error.message : 'The document could not be saved.'
       return false
+    } finally {
+      if (isCurrent(session, generation) && state.write === sequence) session.pendingSave = null
     }
   }
 
