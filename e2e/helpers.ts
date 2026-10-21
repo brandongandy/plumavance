@@ -15,6 +15,9 @@ export async function createDocument(page: Page): Promise<void> {
   const layout = await workspace.getAttribute('data-layout')
   if (layout === 'phone') await page.getByLabel('Binder panel').click()
   else if (layout === 'tablet') await page.getByLabel('Show binder').click()
+  const created = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname.endsWith('/items') && response.ok())
   await page.getByLabel('New document').click()
-  await page.getByLabel('Document editor').waitFor()
+  const { id } = await (await created).json() as { id: string }
+  await page.locator(`[data-document-pane="${id}"]`).getByLabel(/document editor$/i).waitFor()
 }
