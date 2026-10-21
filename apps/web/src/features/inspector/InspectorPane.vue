@@ -6,7 +6,6 @@ import DocumentNotes from './DocumentNotes.vue'
 import SnapshotList from './SnapshotList.vue'
 
 const props = defineProps<{ documentId: string | null }>()
-const emit = defineEmits<{ saved: [id: string, title: string] }>()
 const documents = useDocumentStore()
 const session = computed(() => documents.sessionFor(props.documentId ?? ''))
 const activeTab = ref<'notes' | 'snapshots'>('notes')
@@ -45,7 +44,7 @@ const activeTab = ref<'notes' | 'snapshots'>('notes')
       <p v-else>No document selected.</p>
     </div>
     <div v-else id="snapshots-panel" role="tabpanel" aria-labelledby="snapshots-tab" class="inspector-panel">
-      <SnapshotList v-if="documentId && session?.savedBuffer" :document-id="documentId" @saved="(id, title) => emit('saved', id, title)" />
+      <SnapshotList v-if="documentId && session?.savedBuffer" :document-id="documentId" />
       <p v-else>No document selected.</p>
     </div>
   </aside>

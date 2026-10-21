@@ -195,11 +195,11 @@ async function add(kind: 'folder' | 'document'): Promise<void> {
   if (!unsavedGuard.canDiscard(removedIds)) return
   const parentId = parentForNewItem()
   if (parentId) expandedIds.value = new Set(expandedIds.value).add(parentId)
-  await store.createItem(kind, parentId)
-  store.activePanel = 'editor'
-  if (store.activeItemId) {
-    editingId.value = store.activeItemId
-    await focusItem(store.activeItemId)
+  const createdId = await store.createItem(kind, parentId)
+  if (createdId && store.activeItemId === createdId) {
+    store.activePanel = 'editor'
+    editingId.value = createdId
+    await focusItem(createdId)
   }
 }
 

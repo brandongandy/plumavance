@@ -28,6 +28,19 @@ const route = useRoute()
 const store = useWorkspaceStore()
 const documentStore = useDocumentStore()
 const writingProgress = useWritingProgressStore()
+let workspaceActive = true
+// The workspace outlives suspended editors and snapshot dialogs. Only accepted
+// operations on the same session may synchronize project presentation here.
+documentStore.$onAction(({ name, args, after }) => {
+  if (name !== 'save' && name !== 'keepMine' && name !== 'reloadServerCopy') return
+  const id = args[0]
+  const session = documentStore.sessionFor(id)
+  after((succeeded) => {
+    if (!workspaceActive || !succeeded || !session?.savedBuffer || documentStore.sessionFor(id) !== session) return
+    documentSaved(id, session.savedBuffer.title)
+    if (name === 'reloadServerCopy') void writingProgress.refresh()
+  })
+})
 const unsavedGuard = useUnsavedGuard((ids) => documentStore.hasDirtySessions(ids))
 onBeforeRouteUpdate((to, from) => to.params.projectId === from.params.projectId || unsavedGuard.canDiscard())
 const compileTask = useCompile()
@@ -176,12 +189,11 @@ function closeTab(itemId: string, closeOthers: boolean): void {
 async function saveDocument(): Promise<void> {
   const id = store.activeTabId
   if (!activeDocumentReady.value || !id) return
-  if (!(await documentStore.save(id))) return
-  const session = documentStore.sessionFor(id)
-  if (session) documentSaved(id, session.title)
+  await documentStore.save(id)
 }
 
 function documentSaved(id: string, title: string): void {
+  if (!store.items.some((item) => item.id === id && item.title !== title)) return
   store.items = store.items.map((item) =>
     item.id === id ? { ...item, title } : item,
   )
@@ -197,6 +209,7 @@ onMounted(() => {
 })
 watch(() => route.params.projectId, (projectId) => { void store.load(String(projectId)) }, { immediate: true })
 onBeforeUnmount(() => {
+  workspaceActive = false
   window.removeEventListener('resize', updateLayout)
   window.removeEventListener('keydown', handleWorkspaceShortcut)
   void writingProgress.flush()
@@ -259,7 +272,6 @@ onBeforeUnmount(() => {
               :focus-mode="focusMode.isActive.value"
               @focus="store.activateTab"
               @resize="resizeSplit"
-              @saved="documentSaved"
               @word-count-delta="writingProgress.recordEditorDelta"
             />
             <p v-else class="workspace-empty">Select or create a document.</p>
@@ -269,7 +281,6 @@ onBeforeUnmount(() => {
       <template #inspector>
         <InspectorPane
           :document-id="activeDocumentReady ? store.activeTabId : null"
-          @saved="documentSaved"
         />
       </template>
     </WorkspacePanes>
