@@ -7,6 +7,7 @@ import { useTypewriterScroll } from '../focus/useTypewriterScroll.js'
 import { countText, editorText } from './counts.js'
 import { documentExtensions } from './documentExtensions.js'
 import EditorToolbar from './EditorToolbar.vue'
+import type { SaveState } from '../../stores/document.js'
 
 const props = withDefaults(defineProps<{
   modelValue: EditorDocument
@@ -15,12 +16,16 @@ const props = withDefaults(defineProps<{
   ariaLabel?: string
   scrollTop?: number
   toolbar?: boolean
-}>(), { ariaLabel: 'Document editor', scrollTop: 0, toolbar: true })
+  saveState?: SaveState
+  saveMessage?: string
+}>(), { ariaLabel: 'Document editor', scrollTop: 0, toolbar: true, saveState: 'saved' })
 const emit = defineEmits<{
   'update:modelValue': [value: EditorDocument]
   'update:scrollTop': [value: number]
   'word-count-delta': [signedDelta: number]
   save: []
+  reload: []
+  keepMine: []
 }>()
 
 const editor = useEditor({
@@ -106,7 +111,15 @@ onBeforeUnmount(() => editor.value?.destroy())
 
 <template>
   <div data-document-editor class="document-editor" @keydown="handleKeydown" @keyup="handleKeyup">
-    <EditorToolbar v-if="toolbar" :editor="editor ?? null" />
+    <EditorToolbar
+      v-if="toolbar"
+      :editor="editor ?? null"
+      :save-state="saveState"
+      :save-message="saveMessage"
+      @save="emit('save')"
+      @reload="emit('reload')"
+      @keep-mine="emit('keepMine')"
+    />
     <div
       ref="scrollContainer"
       class="document-scroll"

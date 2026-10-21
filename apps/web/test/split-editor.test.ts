@@ -177,7 +177,7 @@ describe('split document panes', () => {
     await pane.get('[data-document-editor]').trigger('keydown', { key: 's', ctrlKey: true })
     await flushPromises()
     expect(pane.get('[role="alert"]').text()).toContain('Disk unavailable.')
-    await pane.findAll('button').find((button) => button.text() === 'Retry')!.trigger('click')
+    await pane.get('button[aria-label="Retry save"]').trigger('click')
     await flushPromises()
     expect(useDocumentStore().sessionFor(secondId)?.saveState).toBe('saved')
     useDocumentStore().sessionFor(secondId)!.operation = 'conflict'

@@ -300,11 +300,9 @@ onBeforeUnmount(() => {
       :project-name="store.project?.name ?? 'Opening project…'"
       :binder-open="layout === 'desktop' ? store.binderOpen : store.activePanel === 'binder'"
       :inspector-open="layout === 'desktop' ? store.inspectorOpen : store.activePanel === 'inspector'"
-      :save-disabled="!canSave"
       :focus-disabled="!activeDocumentReady"
       @toggle-binder="toggleBinder"
       @toggle-inspector="toggleInspector"
-      @save="saveDocument"
       @compile="openCompile"
       @focus="enterFocusMode"
       @settings="openSettings"
@@ -372,7 +370,6 @@ onBeforeUnmount(() => {
     />
     <StatusBar
       :item-title="store.activeItem?.kind === 'document' ? focusedSession?.title : store.activeItem?.title"
-      :save-state="activeDocumentReady ? focusedSession?.saveState ?? 'saved' : 'saved'"
       :words="focusedCounts.words"
       :characters="focusedCounts.characters"
       :project-words="projectWords"
