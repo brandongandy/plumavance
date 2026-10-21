@@ -273,9 +273,7 @@ export const useDocumentStore = defineStore('document', () => {
       if (!isCurrent(session, generation) || sequence !== state.snapshotDetail || snapshot.documentId !== id) return undefined
       return snapshot
     } catch (error) {
-      if (isCurrent(session, generation) && sequence === state.snapshotDetail) {
-        session.errorMessage = error instanceof Error ? error.message : 'The snapshot could not be loaded.'
-      }
+      if (isCurrent(session, generation) && sequence === state.snapshotDetail) throw error
       return undefined
     }
   }

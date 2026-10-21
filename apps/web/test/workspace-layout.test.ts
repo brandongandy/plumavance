@@ -22,6 +22,21 @@ const nextDocumentId = '66666666-6666-4666-8666-666666666666'
 const researchDocumentId = '77777777-7777-4777-8777-777777777777'
 const chapterId = '33333333-3333-4333-8333-333333333333'
 const folderId = '22222222-2222-4222-8222-222222222222'
+const snapshotId = '88888888-8888-4888-8888-888888888888'
+
+const snapshotSummary = {
+  id: snapshotId,
+  documentId: chapterId,
+  name: 'First pass',
+  wordCount: 2,
+  createdAt: '2026-10-10T00:01:00.000Z',
+}
+
+const snapshotDetail = {
+  ...snapshotSummary,
+  contentText: 'Earlier prose',
+  contentJson: { type: 'doc' as const, content: [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: 'Earlier prose' }] }] },
+}
 
 function projectResponse(id = projectId): Response {
   return Response.json({
@@ -105,6 +120,7 @@ function researchDocumentResponse(): Response {
 
 async function mountWorkspaceWithTwoDocuments(
   loadResearch: () => Response | Promise<Response> = researchDocumentResponse,
+  handleRequest?: (url: URL, init?: RequestInit) => Response | Promise<Response> | undefined,
 ): Promise<VueWrapper> {
   const detail = await projectResponse().json()
   detail.items.push({
@@ -113,7 +129,9 @@ async function mountWorkspaceWithTwoDocuments(
     title: 'Research Notes',
     position: 1,
   })
-  return mountWorkspace(1280, (url) => {
+  return mountWorkspace(1280, (url, init) => {
+    const response = handleRequest?.(url, init)
+    if (response) return response
     if (url.pathname === `/api/projects/${projectId}`) return Response.json(detail)
     if (url.pathname === `/api/documents/${researchDocumentId}`) return loadResearch()
     return workspaceResponse(url)
@@ -155,6 +173,212 @@ describe('workspace layout', () => {
     await flushPromises()
     return wrapper
   }
+
+  test.each([
+    ['Preview', 'preview'],
+    ['Compare', 'comparison'],
+  ] as const)('opens_snapshot_%s_in_a_readonly_split_pane_and_closes_by_exiting_split', async (action, mode) => {
+    // Catches snapshot inspection falling back to a modal or an editable pane.
+    const wrapper = await mountWorkspace(1280, (url) => {
+      if (url.pathname === `/api/documents/${chapterId}/snapshots`) return Response.json([snapshotSummary])
+      if (url.pathname === `/api/snapshots/${snapshotId}`) return Response.json(snapshotDetail)
+      return workspaceResponse(url)
+    })
+    await wrapper.get('#snapshots-tab').trigger('click')
+    await wrapper.get(`[aria-label="${action} First pass"]`).trigger('click')
+    await flushPromises()
+
+    const pane = wrapper.get(`[aria-label="First pass snapshot ${mode}"]`)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(1)
+    expect(wrapper.find('.split-editor [role="separator"]').exists()).toBe(true)
+    if (mode === 'preview') {
+      expect(pane.get('[aria-label="First pass snapshot editor"]').attributes('contenteditable')).toBe('false')
+      const readingArea = pane.get('[aria-label="First pass snapshot editor reading area"]')
+      expect(readingArea.attributes('role')).toBe('document')
+      expect(readingArea.attributes('tabindex')).toBe('0')
+      expect(pane.find('[role="toolbar"]').exists()).toBe(false)
+      expect(pane.text()).toContain('Earlier prose')
+    } else {
+      expect(pane.get('del').text()).toContain('Earlier')
+      expect(pane.get('ins').text()).toContain('Saved')
+      const editor = wrapper.get('[aria-label="Chapter One document editor"]')
+      editor.get('p').element.textContent = 'Revised after comparison opened'
+      await editor.trigger('input')
+      await flushPromises()
+      expect(pane.get('ins').text()).toContain('Saved')
+      expect(pane.text()).not.toContain('Revised after comparison opened')
+    }
+
+    await pane.get('[aria-label="Close snapshot pane"]').trigger('click')
+    expect(wrapper.find('[data-snapshot-pane]').exists()).toBe(false)
+    expect(wrapper.find('.split-editor [role="separator"]').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="Chapter One document editor"]').attributes('contenteditable')).toBe('true')
+  })
+
+  test('saves_the_adjacent_document_when_the_shortcut_starts_in_a_readonly_snapshot', async () => {
+    // Catches the readonly editor swallowing Cmd/Ctrl+S before the workspace can save the active draft.
+    const wrapper = await mountWorkspace(1280, (url) => {
+      if (url.pathname === `/api/documents/${chapterId}/snapshots`) return Response.json([snapshotSummary])
+      if (url.pathname === `/api/snapshots/${snapshotId}`) return Response.json(snapshotDetail)
+      return workspaceResponse(url)
+    })
+    await wrapper.get('[aria-label="Document title"]').setValue('Shortcut draft')
+    await wrapper.get('#snapshots-tab').trigger('click')
+    await wrapper.get('[aria-label="Preview First pass"]').trigger('click')
+    await flushPromises()
+
+    const readingArea = wrapper.get('[aria-label="First pass snapshot editor reading area"]')
+    ;(readingArea.element as HTMLElement).focus()
+    const shortcut = new KeyboardEvent('keydown', {
+      key: 's',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    readingArea.element.dispatchEvent(shortcut)
+    await flushPromises()
+
+    expect(shortcut.defaultPrevented).toBe(true)
+    expect(useDocumentStore().hasDirtySessions()).toBe(false)
+  })
+
+  test('replaces_the_unfocused_document_with_a_snapshot_then_exits_the_existing_split_on_close', async () => {
+    // Catches closing a snapshot revealing a previously displaced split participant.
+    const wrapper = await mountWorkspaceWithTwoDocuments(researchDocumentResponse, (url) => {
+      if (url.pathname === `/api/documents/${chapterId}/snapshots`) return Response.json([snapshotSummary])
+      if (url.pathname === `/api/snapshots/${snapshotId}`) return Response.json(snapshotDetail)
+      return undefined
+    })
+    await wrapper.get('[aria-label="Open Research Notes in new tab"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[aria-label="Split editor horizontally"]').trigger('click')
+    await wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-title`).trigger('click')
+    await wrapper.get('#snapshots-tab').trigger('click')
+    await wrapper.get('[aria-label="Preview First pass"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(1)
+    expect(wrapper.get(`[data-document-pane="${chapterId}"]`).exists()).toBe(true)
+    expect(wrapper.get('.split-editor [role="separator"]').attributes('aria-orientation')).toBe('horizontal')
+    await wrapper.get('[aria-label="Close snapshot pane"]').trigger('click')
+
+    expect(useWorkspaceStore().isSplit).toBe(false)
+    expect(wrapper.find('[data-snapshot-pane]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(1)
+    expect(wrapper.get(`[data-document-pane="${chapterId}"]`).exists()).toBe(true)
+    expect(wrapper.get(`[data-tab-id="${researchDocumentId}"]`).exists()).toBe(true)
+  })
+
+  test('does_not_reopen_a_snapshot_pane_when_its_detail_arrives_after_close', async () => {
+    // Catches a late detail response recreating a snapshot pane the writer already dismissed.
+    let finishDetail!: (response: Response) => void
+    const wrapper = await mountWorkspace(1280, (url) => {
+      if (url.pathname === `/api/documents/${chapterId}/snapshots`) return Response.json([snapshotSummary])
+      if (url.pathname === `/api/snapshots/${snapshotId}`) {
+        return new Promise<Response>((resolve) => { finishDetail = resolve })
+      }
+      return workspaceResponse(url)
+    })
+    await wrapper.get('#snapshots-tab').trigger('click')
+    await wrapper.get('[aria-label="Preview First pass"]').trigger('click')
+    expect(wrapper.get('[data-snapshot-pane]').text()).toContain('Loading snapshot')
+    await wrapper.get('[aria-label="Close snapshot pane"]').trigger('click')
+    finishDetail(Response.json(snapshotDetail))
+    await flushPromises()
+
+    expect(wrapper.find('[data-snapshot-pane]').exists()).toBe(false)
+    expect(wrapper.find('.split-editor [role="separator"]').exists()).toBe(false)
+  })
+
+  test('a_snapshot_failure_after_close_does_not_replace_the_document_save_error', async () => {
+    // Catches an inspector request leaking its error into the document save-status channel.
+    let failDetail!: (reason?: unknown) => void
+    const wrapper = await mountWorkspace(1280, (url) => {
+      if (url.pathname === `/api/documents/${chapterId}/snapshots`) return Response.json([snapshotSummary])
+      if (url.pathname === `/api/snapshots/${snapshotId}`) {
+        return new Promise<Response>((_resolve, reject) => { failDetail = reject })
+      }
+      return workspaceResponse(url)
+    })
+    await wrapper.get('#snapshots-tab').trigger('click')
+    await wrapper.get('[aria-label="Preview First pass"]').trigger('click')
+    const session = useDocumentStore().sessionFor(chapterId)!
+    session.operation = 'failed'
+    session.errorMessage = 'The document could not be saved.'
+    await wrapper.get('[aria-label="Close snapshot pane"]').trigger('click')
+    failDetail(new Error('The snapshot could not be loaded.'))
+    await flushPromises()
+
+    expect(session.errorMessage).toBe('The document could not be saved.')
+    expect(wrapper.get(`[data-document-pane="${chapterId}"] [role="alert"]`).text()).toContain('The document could not be saved.')
+  })
+
+  test('shows_snapshot_load_failures_inside_the_split_pane', async () => {
+    // Catches snapshot API failures leaving the new pane stuck in its loading state.
+    const wrapper = await mountWorkspace(1280, (url) => {
+      if (url.pathname === `/api/documents/${chapterId}/snapshots`) return Response.json([snapshotSummary])
+      if (url.pathname === `/api/snapshots/${snapshotId}`) return Promise.reject(new Error('Snapshot storage is unavailable.'))
+      return workspaceResponse(url)
+    })
+    await wrapper.get('#snapshots-tab').trigger('click')
+    await wrapper.get('[aria-label="Preview First pass"]').trigger('click')
+    await flushPromises()
+
+    const pane = wrapper.get('[data-snapshot-pane]')
+    expect(pane.get('[role="alert"]').text()).toContain('Snapshot storage is unavailable.')
+    expect(pane.find('[role="status"]').exists()).toBe(false)
+    expect(useDocumentStore().sessionFor(chapterId)?.errorMessage).toBe('')
+  })
+
+  test.each([
+    [1280, 'trigger'],
+    [600, 'editor'],
+  ] as const)('moves_focus_into_and_out_of_the_snapshot_pane_at_%ipx', async (width, returnTarget) => {
+    // Catches focus being left in a hidden inspector or lost when the snapshot pane unmounts.
+    const wrapper = await mountWorkspace(width, (url) => {
+      if (url.pathname === `/api/documents/${chapterId}/snapshots`) return Response.json([snapshotSummary])
+      if (url.pathname === `/api/snapshots/${snapshotId}`) return Response.json(snapshotDetail)
+      return workspaceResponse(url)
+    })
+    if (width < 768) await wrapper.get('[aria-label="Inspector panel"]').trigger('click')
+    await wrapper.get('#snapshots-tab').trigger('click')
+    const trigger = wrapper.get('[aria-label="Preview First pass"]')
+    ;(trigger.element as HTMLElement).focus()
+    await trigger.trigger('click')
+    await flushPromises()
+
+    const close = wrapper.get('[aria-label="Close snapshot pane"]')
+    expect(document.activeElement).toBe(close.element)
+    await close.trigger('click')
+    await flushPromises()
+
+    const expected = returnTarget === 'trigger'
+      ? trigger.element
+      : wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-title`).element
+    expect(document.activeElement).toBe(expected)
+  })
+
+  test('closing_a_snapshot_in_focus_mode_does_not_restore_focus_to_the_hidden_inspector', async () => {
+    // Catches connected-but-hidden inspector controls stealing focus in fullscreen writing mode.
+    const wrapper = await mountWorkspace(1280, (url) => {
+      if (url.pathname === `/api/documents/${chapterId}/snapshots`) return Response.json([snapshotSummary])
+      if (url.pathname === `/api/snapshots/${snapshotId}`) return Response.json(snapshotDetail)
+      return workspaceResponse(url)
+    })
+    await wrapper.get('#snapshots-tab').trigger('click')
+    const trigger = wrapper.get('[aria-label="Preview First pass"]')
+    ;(trigger.element as HTMLElement).focus()
+    await trigger.trigger('click')
+    await flushPromises()
+    await wrapper.get('[aria-label="Focus"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[aria-label="Close snapshot pane"]').trigger('click')
+    await flushPromises()
+
+    expect(document.activeElement).toBe(wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-title`).element)
+    expect(document.activeElement).not.toBe(trigger.element)
+  })
 
   test('renders_two_editable_documents_and_switches_orientation_without_losing_buffers', async () => {
     // Catches missing split wiring and orientation changes recreating document buffers.

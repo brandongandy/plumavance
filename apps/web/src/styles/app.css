@@ -1052,45 +1052,6 @@ button {
   box-shadow: none;
 }
 
-.snapshot-dialog {
-  width: calc(100vw - 24px);
-}
-
-.snapshot-dialog .p-dialog-content {
-  background: var(--color-editor);
-}
-
-.snapshot-preview,
-.snapshot-comparison {
-  max-height: 60vh;
-  overflow: auto;
-  white-space: pre-wrap;
-  color: var(--color-text-soft);
-  font-family: var(--font-editor);
-  font-size: 16px;
-  line-height: 1.6;
-}
-
-.snapshot-preview {
-  margin: 0;
-}
-
-.snapshot-comparison ins {
-  background: color-mix(in srgb, var(--color-success) 24%, transparent);
-  text-decoration: none;
-}
-
-.snapshot-comparison del {
-  background: color-mix(in srgb, var(--color-danger) 20%, transparent);
-}
-
-@media (min-width: 1024px) {
-  .snapshot-dialog {
-    width: var(--snapshot-dialog-desktop-width);
-    max-width: var(--snapshot-dialog-desktop-width);
-  }
-}
-
 .compile-dialog {
   width: min(760px, calc(100vw - 24px));
 }
