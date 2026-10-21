@@ -376,7 +376,7 @@ describe('workspace layout', () => {
     await wrapper.get('[aria-label="Close snapshot pane"]').trigger('click')
     await flushPromises()
 
-    expect(document.activeElement).toBe(wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-title`).element)
+    expect(document.activeElement).toBe(wrapper.get('[aria-label="Chapter One document editor"]').element)
     expect(document.activeElement).not.toBe(trigger.element)
   })
 
@@ -1418,6 +1418,24 @@ describe('workspace layout', () => {
 
     expect(shortcut.defaultPrevented).toBe(true)
     expect(wrapper.get('.workspace-shell').classes()).toContain('is-focus-mode')
+  })
+
+  test('removes_document_tabs_and_split_controls_while_focus_mode_is_active', async () => {
+    const wrapper = await mountWorkspace()
+    expect(wrapper.find('.editor-tabs').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Split editor"]').exists()).toBe(true)
+
+    await wrapper.get('button[aria-label="Focus"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.editor-tabs').exists()).toBe(false)
+    expect(wrapper.find('[aria-label="Split editor"]').exists()).toBe(false)
+
+    await wrapper.get('button[aria-label="Exit focus mode"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.editor-tabs').exists()).toBe(true)
+    expect(wrapper.find('[aria-label="Split editor"]').exists()).toBe(true)
   })
 
   test('keeps_focus_mode_unavailable_when_no_document_editor_is_open', async () => {
