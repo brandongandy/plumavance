@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, provide } from 'vue'
 
 import type { SplitOrientation } from '../../stores/workspace.js'
-import DocumentPane from './DocumentPane.vue'
+import DocumentPane, { unmountedPaneSavedKey } from './DocumentPane.vue'
 import SplitDivider from './SplitDivider.vue'
 
 const props = defineProps<{
@@ -19,6 +19,8 @@ const emit = defineEmits<{
   wordCountDelta: [delta: number]
   resize: [ratio: number]
 }>()
+
+provide(unmountedPaneSavedKey, (id, title) => emit('saved', id, title))
 
 const participants = computed(() => [...new Set(props.documentIds)].slice(0, 2))
 const visibleIds = computed(() => {
