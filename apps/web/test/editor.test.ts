@@ -56,6 +56,34 @@ afterEach(() => {
 })
 
 describe('document editor state', () => {
+  test.each([true, false])('pending_write_discard_risk_clears_after_save_success_%s', async (succeeds) => {
+    setActivePinia(createPinia())
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    vi.spyOn(documentApi, 'get').mockResolvedValue(documentFixture())
+    let finish!: () => void
+    vi.spyOn(documentApi, 'save').mockImplementation((_id, payload) => new Promise((resolve, reject) => {
+      finish = () => succeeds ? resolve(documentFixture({ ...payload, revision: 1 })) : reject(new Error('Save failed'))
+    }))
+    const store = useDocumentStore()
+    await store.load(firstId)
+    const unchangedSave = store.save(firstId)
+    expect(store.hasDirtySessions()).toBe(false)
+    finish()
+    await unchangedSave
+    store.setNotes(firstId, 'Submitted notes')
+    const saving = store.save(firstId)
+    store.setNotes(firstId, '')
+    expect(store.sessionFor(firstId)?.isDirty).toBe(false)
+    expect(store.hasDirtySessions()).toBe(true)
+    finish()
+    expect(await saving).toBe(succeeds)
+    expect(store.hasDirtySessions()).toBe(succeeds)
+    if (succeeds) {
+      store.setNotes(firstId, 'Submitted notes')
+      expect(store.hasDirtySessions()).toBe(false)
+    }
+  })
+
   test('keeps_two_document_sessions_editable_and_saveable_independently', async () => {
     setActivePinia(createPinia())
     vi.spyOn(snapshotApi, 'list').mockResolvedValue([])

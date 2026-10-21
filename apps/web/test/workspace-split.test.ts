@@ -53,6 +53,88 @@ afterEach(() => {
 })
 
 describe('workspace split state', () => {
+  test.each(['create', 'trash'] as const)('a_new_divergent_pending_write_invalidates_%s_approval_before_the_save_finishes', async (action) => {
+    const store = workspace()
+    const documents = useDocumentStore()
+    await documents.load(firstId)
+    const session = documents.sessionFor(firstId)!
+    let finishAction!: () => void
+    let finishSave!: () => void
+    const created = { ...items[1]!, id: 'created' }
+    vi.spyOn(binderApi, 'create').mockImplementation(() => new Promise((resolve) => { finishAction = () => resolve(created) }))
+    vi.spyOn(binderApi, 'trash').mockImplementation(() => new Promise((resolve) => { finishAction = () => resolve({ ...items[1]!, trashedAt: stamp }) }))
+    vi.spyOn(documentApi, 'save').mockImplementation((id, payload) => new Promise((resolve) => { finishSave = () => resolve({ ...documentFixture(id), ...payload, revision: 4 }) }))
+    const confirm = vi.fn(() => false)
+    const actionPending = action === 'create' ? store.createItem('document', folderId) : store.trashItem(firstId, confirm)
+    documents.setNotes(firstId, 'Pending notes')
+    const saving = documents.save(firstId)
+    documents.setNotes(firstId, '')
+    expect(session.isDirty).toBe(false)
+    finishAction()
+    await actionPending
+    expect(documents.sessionFor(firstId)).toBe(session)
+    if (action === 'trash') {
+      expect(confirm).toHaveBeenCalledExactlyOnceWith([firstId])
+      expect(store.retainedTrashDocumentIds.get(firstId)).toEqual([firstId])
+    } else {
+      expect(store.activeTabId).toBe(firstId)
+      expect(store.openDocumentIds).toContain(created.id)
+    }
+    finishSave()
+    expect(await saving).toBe(true)
+    expect(session.isDirty).toBe(true)
+  })
+
+  test.each(['success', 'failure', 'discard'] as const)('rename_waits_for_the_current_initial_load_%s', async (outcome) => {
+    const store = workspace()
+    const documents = useDocumentStore()
+    let finish!: (value: DocumentDto) => void
+    let fail!: (error: Error) => void
+    vi.mocked(documentApi.get).mockImplementationOnce(() => new Promise((resolve, reject) => { finish = resolve; fail = reject }))
+    const save = vi.spyOn(documentApi, 'save').mockImplementation(async (id, payload) => ({ ...documentFixture(id), ...payload, revision: 4 }))
+    const loading = documents.load(firstId)
+    const renaming = store.renameItem(firstId, 'Renamed chapter')
+    expect(documents.sessionFor(firstId)?.title).toBe('')
+    expect(save).not.toHaveBeenCalled()
+    store.activateTab(secondId)
+    if (outcome === 'discard') {
+      documents.discard(firstId)
+      await documents.load(firstId)
+    }
+    if (outcome === 'failure') fail(new Error('Initial load failed'))
+    else finish(documentFixture(firstId))
+    await Promise.all([loading, renaming])
+    expect(documentApi.get).toHaveBeenCalledTimes(outcome === 'discard' ? 2 : 1)
+    expect(store.activeTabId).toBe(secondId)
+    if (outcome === 'success') {
+      expect(save).toHaveBeenCalledExactlyOnceWith(firstId, expect.objectContaining({ title: 'Renamed chapter', expectedRevision: 3 }))
+      expect(documents.sessionFor(firstId)?.title).toBe('Renamed chapter')
+      expect(store.items.find((item) => item.id === firstId)?.title).toBe('Renamed chapter')
+    } else {
+      expect(save).not.toHaveBeenCalled()
+      expect(store.items.find((item) => item.id === firstId)?.title).toBe(firstId)
+      if (outcome === 'failure') expect(store.errorMessage).toContain('Initial load failed')
+      else expect(documents.sessionFor(firstId)?.title).toBe(firstId)
+    }
+  })
+
+  test.each([[firstId, secondId], [folderId, secondId], [firstId, folderId]])('restore_preserves_navigation_from_%s_to_%s_during_refresh', async (initial, next) => {
+    const store = workspace()
+    store.activeItemId = initial
+    vi.spyOn(binderApi, 'restore').mockResolvedValue(items[4]!)
+    let finish!: (value: Awaited<ReturnType<typeof binderApi.getProject>>) => void
+    vi.spyOn(binderApi, 'getProject').mockImplementation(() => new Promise((resolve) => { finish = resolve }))
+    const restoring = store.restoreItem(fourthId)
+    await Promise.resolve()
+    if (next === folderId) store.activeItemId = folderId
+    else store.activateTab(next!)
+    finish({ project, items, trashedItems: [] })
+    await restoring
+    expect(store.activeItemId).toBe(next)
+    expect(store.activeTabId).toBe(next === folderId ? firstId : next)
+    expect(store.renderedDocumentIds).toEqual(next === folderId ? [] : [next])
+  })
+
   test('ignores_an_old_create_when_the_same_project_is_reopened_with_the_created_item', async () => {
     // Catches an A→B→A response matching the project ID but belonging to an obsolete workspace incarnation.
     const store = workspace()

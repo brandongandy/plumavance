@@ -320,6 +320,62 @@ describe('workspace layout', () => {
     expect(confirm).toHaveBeenCalledOnce()
   })
 
+  test.each(['close', 'close-others', 'replace', 'navigate'] as const)('pending_save_divergence_guards_%s_even_when_current_buffer_matches_old_baseline', async (action) => {
+    const wrapper = await splitWorkspace()
+    const workspace = useWorkspaceStore()
+    const documents = useDocumentStore()
+    const session = documents.sessionFor(chapterId)!
+    let finish!: () => void
+    vi.spyOn(documentApi, 'save').mockImplementation((id, payload) => new Promise((resolve) => {
+      finish = () => resolve({ id, projectId, ...payload, contentText: 'Saved prose', revision: 1, savedAt: 'later' })
+    }))
+    documents.setTitle(chapterId, 'Pending title')
+    const saving = documents.save(chapterId)
+    documents.setTitle(chapterId, 'Chapter One')
+    expect(session.isDirty).toBe(false)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    if (action === 'close') await wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-close`).trigger('click')
+    if (action === 'close-others') await wrapper.get(`[data-tab-id="${researchDocumentId}"] .editor-tab-close`).trigger('click', { altKey: true })
+    if (action === 'replace') {
+      workspace.items.push({ ...workspace.items.find((item) => item.id === chapterId)!, id: nextDocumentId, title: 'Third chapter' })
+      await wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-title`).trigger('click')
+      await wrapper.get(`[data-item-id="${nextDocumentId}"]`).trigger('click')
+    }
+    if (action === 'navigate') {
+      const unload = new Event('beforeunload', { cancelable: true })
+      window.dispatchEvent(unload)
+      expect(unload.defaultPrevented).toBe(true)
+      const router = wrapper.getComponent(WorkspaceView).vm.$router
+      await router.push('/')
+      expect(router.currentRoute.value.path).toBe(`/projects/${projectId}`)
+    }
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(documents.sessionFor(chapterId)).toBe(session)
+    expect(workspace.openDocumentIds).toContain(chapterId)
+    finish()
+    expect(await saving).toBe(true)
+    expect(session.isDirty).toBe(true)
+  })
+
+  test('accepting_close_during_a_divergent_save_discards_only_the_approved_session', async () => {
+    const wrapper = await mountWorkspace()
+    const documents = useDocumentStore()
+    let finish!: () => void
+    vi.spyOn(documentApi, 'save').mockImplementation((id, payload) => new Promise((resolve) => {
+      finish = () => resolve({ id, projectId, ...payload, contentText: 'Saved prose', revision: 1, savedAt: 'later' })
+    }))
+    documents.setTitle(chapterId, 'Pending title')
+    const saving = documents.save(chapterId)
+    documents.setTitle(chapterId, 'Chapter One')
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-close`).trigger('click')
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(documents.sessionFor(chapterId)).toBeUndefined()
+    finish()
+    expect(await saving).toBe(false)
+    expect(documents.hasDirtySessions()).toBe(false)
+  })
+
   test('trash_uses_one_prompt_for_the_whole_subtree_and_ignores_unrelated_dirty_sessions', async () => {
     // Catches subtree trash ignoring hidden descendants or prompting for documents it preserves.
     const wrapper = await splitWorkspace()
@@ -613,13 +669,13 @@ describe('workspace layout', () => {
         finishAction = () => resolve({ ...originalItem, title: 'Pending saved title', trashedAt: '2026-10-21T00:00:00.000Z' })
       }))
     }
-    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(discard)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(discard).mockReturnValueOnce(true)
     await wrapper.get('[aria-label="Document title"]').setValue('Pending saved title')
     await wrapper.get('[aria-label="Save document"]').trigger('click')
     await wrapper.get('[aria-label="Document title"]').setValue('Chapter One')
     expect(session.isDirty).toBe(false)
     await wrapper.get(action === 'create' ? '[aria-label="New document"]' : '[aria-label="Move selected item to Trash"]').trigger('click')
-    expect(confirm).not.toHaveBeenCalled()
+    expect(confirm).toHaveBeenCalledOnce()
     finishSave()
     await flushPromises()
     expect(session.title).toBe('Chapter One')
@@ -628,12 +684,12 @@ describe('workspace layout', () => {
     finishAction()
     await flushPromises()
     if (action === 'create') {
-      expect(confirm).not.toHaveBeenCalled()
+      expect(confirm).toHaveBeenCalledOnce()
       expect(workspace.openDocumentIds).toEqual([chapterId, nextDocumentId])
       expect(workspace.activeTabId).toBe(chapterId)
       expect(documents.sessionFor(chapterId)).toBe(session)
     } else {
-      expect(confirm).toHaveBeenCalledOnce()
+      expect(confirm).toHaveBeenCalledTimes(2)
       expect(workspace.openDocumentIds).toEqual([])
       expect(workspace.items.some((item) => item.id === chapterId)).toBe(false)
       if (discard) expect(documents.sessionFor(chapterId)).toBeUndefined()
