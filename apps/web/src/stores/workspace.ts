@@ -281,12 +281,16 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const documents = useDocumentStore()
     const replacementSession = replacementId ? documents.sessionFor(replacementId) : undefined
     const approvedBuffer = editableBuffer(replacementSession)
+    const approvedSavedBuffer = replacementSession?.savedBuffer
+    const approvedDirty = replacementSession?.isDirty
     const title = kind === 'folder' ? 'Untitled Folder' : 'Untitled Document'
     const created = await binderApi.create(creatingProjectId, { kind, parentId, title })
     if (projectId.value !== creatingProjectId || projectEpoch !== creatingEpoch) return
     const canReplace = activeItemId.value === selectedId && activeTabId.value === replacementId
       && (!replacementId || documents.sessionFor(replacementId) === replacementSession)
       && editableBuffer(replacementSession) === approvedBuffer
+      && replacementSession?.savedBuffer === approvedSavedBuffer
+      && replacementSession?.isDirty === approvedDirty
     items.value = applyMove([...items.value.filter((item) => item.id !== created.id), created], {
       itemId: created.id,
       parentId: created.parentId,
@@ -371,7 +375,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     const descendantIds = itemIdsInSubtree(id)
     const approved = new Map(documentIdsInSubtree(id).map((documentId) => {
       const session = documents.sessionFor(documentId)
-      return [documentId, { session, buffer: editableBuffer(session) }] as const
+      return [documentId, {
+        session, buffer: editableBuffer(session), savedBuffer: session?.savedBuffer, isDirty: session?.isDirty,
+      }] as const
     }))
     errorMessage.value = ''
     try {
@@ -382,7 +388,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const changedDirtyIds = targetIds.filter((documentId) => {
         const session = documents.sessionFor(documentId)
         const original = approved.get(documentId)
-        return session?.isDirty && (session !== original?.session || editableBuffer(session) !== original?.buffer)
+        return session?.isDirty && (
+          session !== original?.session || editableBuffer(session) !== original?.buffer
+          || session.savedBuffer !== original?.savedBuffer || session.isDirty !== original?.isDirty
+        )
       })
       const retainedIds = new Set(changedDirtyIds.length && !canDiscardChanges(changedDirtyIds) ? changedDirtyIds : [])
       if (retainedIds.size) retainedTrashDocumentIds.value.set(id, [...retainedIds])
