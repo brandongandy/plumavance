@@ -7,6 +7,7 @@ import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { binderApi } from '../src/api/binder.js'
+import { ApiRequestError } from '../src/api/client.js'
 import { documentApi } from '../src/api/documents.js'
 import { snapshotApi } from '../src/api/snapshots.js'
 import WorkspaceView from '../src/views/WorkspaceView.vue'
@@ -476,6 +477,116 @@ describe('workspace layout', () => {
     expect(progressReads).toBe(before + 1)
     expect(useWritingProgressStore().dailyWordCount).toBe(10)
     expect(wrapper.get(`[data-tab-id="${chapterId}"]`).text()).toContain('Server chapter')
+  })
+
+  test.each([false, true])('delayed_subtree_trash_rechecks_new_edits_once_and_keeps_recoverable_buffers_when_declined_%s', async (discard) => {
+    // Catches server-confirmed trash silently deleting edits made after its clean preflight.
+    const wrapper = await splitWorkspace()
+    const workspace = useWorkspaceStore()
+    const documents = useDocumentStore()
+    const originalItems = structuredClone(workspace.items.map((item) => ({ ...item })))
+    const originalProject = { ...workspace.project! }
+    const researchSession = documents.sessionFor(researchDocumentId)
+    const chapterSession = documents.sessionFor(chapterId)
+    let finish!: () => void
+    vi.spyOn(binderApi, 'trash').mockImplementation(() => new Promise((resolve) => {
+      finish = () => resolve({ ...originalItems[0]!, trashedAt: '2026-10-21T00:00:00.000Z' })
+    }))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(discard)
+    await wrapper.get(`[data-item-id="${folderId}"]`).trigger('keydown', { key: 'Delete' })
+    expect(confirm).not.toHaveBeenCalled()
+    await wrapper.get('[aria-label="Document notes"]').setValue('Research written while trash was pending')
+    const chapterEditor = wrapper.get(`[data-document-pane="${chapterId}"] [contenteditable="true"]`)
+    chapterEditor.get('p').element.textContent = 'Chapter written while trash was pending'
+    await chapterEditor.trigger('input')
+    await flushPromises()
+    finish()
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(workspace.openDocumentIds).toEqual([])
+    expect(workspace.items).toEqual([])
+    expect(workspace.activeItemId).toBeNull()
+    expect(wrapper.find('[data-document-pane]').exists()).toBe(false)
+    expect(wrapper.get('[aria-label="Restore Manuscript"]').exists()).toBe(true)
+    if (discard) {
+      expect(documents.sessions.size).toBe(0)
+      expect(wrapper.find('[data-trash-recovery]').exists()).toBe(false)
+      return
+    }
+    expect(documents.sessionFor(researchDocumentId)).toBe(researchSession)
+    expect(documents.sessionFor(chapterId)).toBe(chapterSession)
+    expect(wrapper.get('[data-trash-recovery]').text()).toContain('Restore')
+    expect(wrapper.get('[aria-label="Permanently delete Manuscript"]').attributes()).toHaveProperty('disabled')
+    const remove = vi.spyOn(binderApi, 'delete')
+    await workspace.deleteItem(folderId)
+    expect(remove).not.toHaveBeenCalled()
+    const unload = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unload)
+    expect(unload.defaultPrevented).toBe(true)
+    const restore = vi.spyOn(binderApi, 'restore')
+      .mockRejectedValueOnce(new Error('Restore unavailable'))
+      .mockResolvedValueOnce(originalItems[0]!)
+      .mockRejectedValueOnce(new ApiRequestError(409, { code: 'BINDER_ITEM_NOT_TRASHED', message: 'Already restored' }))
+    vi.spyOn(binderApi, 'getProject')
+      .mockRejectedValueOnce(new Error('Refresh unavailable'))
+      .mockResolvedValue({ project: originalProject, items: originalItems, trashedItems: [] })
+    await wrapper.get('[aria-label="Restore Manuscript"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Restore unavailable')
+    expect(wrapper.get('[data-trash-recovery]').exists()).toBe(true)
+    expect(documents.sessionFor(chapterId)).toBe(chapterSession)
+    await wrapper.get('[aria-label="Restore Manuscript"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Refresh unavailable')
+    expect(wrapper.get('[aria-label="Restore Manuscript"]').exists()).toBe(true)
+    await wrapper.get('[aria-label="Restore Manuscript"]').trigger('click')
+    await flushPromises()
+    expect(restore).toHaveBeenCalledTimes(3)
+    expect(wrapper.find('[data-trash-recovery]').exists()).toBe(false)
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    await wrapper.get(`[data-item-id="${researchDocumentId}"]`).trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[aria-label="Document notes"]').element).toHaveProperty('value', 'Research written while trash was pending')
+    await wrapper.get('[aria-label="Open Chapter One in new tab"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[contenteditable="true"]').text()).toBe('Chapter written while trash was pending')
+    expect(documents.sessionFor(chapterId)).toBe(chapterSession)
+  })
+
+  test('failed_delayed_trash_keeps_edits_and_does_not_create_unreachable_recovery_state', async () => {
+    const wrapper = await splitWorkspace()
+    let fail!: () => void
+    vi.spyOn(binderApi, 'trash').mockImplementation(() => new Promise((_resolve, reject) => {
+      fail = () => reject(new Error('Trash unavailable'))
+    }))
+    await wrapper.get('[aria-label="Move selected item to Trash"]').trigger('click')
+    await wrapper.get('[aria-label="Document notes"]').setValue('Keep writing')
+    fail()
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Trash unavailable')
+    expect(wrapper.find('[data-trash-recovery]').exists()).toBe(false)
+    expect(useWorkspaceStore().trashedItems).toEqual([])
+    expect(useWorkspaceStore().openDocumentIds).toEqual([chapterId, researchDocumentId])
+    expect(useDocumentStore().sessionFor(researchDocumentId)?.notesText).toBe('Keep writing')
+  })
+
+  test('delayed_trash_does_not_repeat_approval_for_an_unchanged_dirty_buffer', async () => {
+    const wrapper = await splitWorkspace()
+    await wrapper.get('[aria-label="Document notes"]').setValue('Already approved notes')
+    const item = { ...useWorkspaceStore().items.find((candidate) => candidate.id === researchDocumentId)! }
+    let finish!: () => void
+    vi.spyOn(binderApi, 'trash').mockImplementation(() => new Promise((resolve) => {
+      finish = () => resolve({ ...item, trashedAt: '2026-10-21T00:00:00.000Z' })
+    }))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await wrapper.get('[aria-label="Move selected item to Trash"]').trigger('click')
+    expect(confirm).toHaveBeenCalledOnce()
+    finish()
+    await flushPromises()
+    expect(confirm).toHaveBeenCalledOnce()
+    expect(useDocumentStore().sessionFor(researchDocumentId)).toBeUndefined()
+    expect(wrapper.find('[data-trash-recovery]').exists()).toBe(false)
+    expect(useWorkspaceStore().activeTabId).toBe(chapterId)
   })
 
   test('replaces_the_active_tab_on_a_normal_binder_document_click', async () => {
