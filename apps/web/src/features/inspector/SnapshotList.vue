@@ -2,7 +2,7 @@
 import type { SnapshotDto, SnapshotSummaryDto } from '@pluma/shared'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
-import { nextTick, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import TooltipButton from '../../components/controls/TooltipButton.vue'
 import { provideTooltipGroup } from '../../components/controls/tooltipGroup.js'
@@ -11,7 +11,10 @@ import SnapshotCompareDialog from './SnapshotCompareDialog.vue'
 import SnapshotPreviewDialog from './SnapshotPreviewDialog.vue'
 import TakeSnapshotDialog from './TakeSnapshotDialog.vue'
 
+const props = defineProps<{ documentId: string }>()
+const emit = defineEmits<{ saved: [id: string, title: string] }>()
 const store = useDocumentStore()
+const session = computed(() => store.sessionFor(props.documentId))
 provideTooltipGroup()
 const takeVisible = ref(false)
 const renameVisible = ref(false)
@@ -29,16 +32,27 @@ function remember(event?: Event): void {
   returnFocus.value = event?.currentTarget instanceof HTMLElement ? event.currentTarget : null
 }
 
-async function closeAll(): Promise<void> {
+function resetDialogs(): void {
   detailSequence += 1
   takeVisible.value = false
   renameVisible.value = false
   previewVisible.value = false
   compareVisible.value = false
   confirmAction.value = null
+  selected.value = null
   selectedDetail.value = null
   detailLoading.value = false
   detailError.value = ''
+}
+
+watch(() => props.documentId, () => {
+  returnFocus.value = null
+  resetDialogs()
+}, { flush: 'sync' })
+onBeforeUnmount(resetDialogs)
+
+async function closeAll(): Promise<void> {
+  resetDialogs()
   await nextTick()
   returnFocus.value?.focus()
 }
@@ -60,29 +74,38 @@ async function openDetail(
   if (mode === 'preview') previewVisible.value = true
   else compareVisible.value = true
   const sequence = ++detailSequence
-  const detail = await store.loadSnapshotDetail(snapshot.id)
+  const detail = await store.loadSnapshotDetail(props.documentId, snapshot.id)
   if (sequence !== detailSequence || selected.value?.id !== snapshot.id) return
   detailLoading.value = false
   if (detail) selectedDetail.value = detail
-  else detailError.value = store.errorMessage || 'The snapshot could not be loaded.'
+  else detailError.value = session.value?.errorMessage || 'The snapshot could not be loaded.'
 }
 
 async function take(name: string, saveFirst: boolean): Promise<void> {
-  if (saveFirst && !(await store.save())) return
-  if (await store.takeSnapshot(name)) await closeAll()
+  const id = props.documentId
+  const sequence = detailSequence
+  if (saveFirst) {
+    if (!(await store.save(id))) return
+    const saved = store.sessionFor(id)
+    if (saved) emit('saved', id, saved.title)
+  }
+  const taken = await store.takeSnapshot(id, name)
+  if (taken && sequence === detailSequence) await closeAll()
 }
 
 async function rename(name: string): Promise<void> {
   if (!selected.value) return
-  await store.renameSnapshot(selected.value.id, name)
-  await closeAll()
+  const sequence = detailSequence
+  await store.renameSnapshot(props.documentId, selected.value.id, name)
+  if (sequence === detailSequence) await closeAll()
 }
 
 async function confirm(): Promise<void> {
   if (!selected.value) return
-  if (confirmAction.value === 'restore') await store.restoreSnapshot(selected.value.id)
-  else if (confirmAction.value === 'delete') await store.deleteSnapshot(selected.value.id)
-  await closeAll()
+  const sequence = detailSequence
+  if (confirmAction.value === 'restore') await store.restoreSnapshot(props.documentId, selected.value.id)
+  else if (confirmAction.value === 'delete') await store.deleteSnapshot(props.documentId, selected.value.id)
+  if (sequence === detailSequence) await closeAll()
 }
 </script>
 
@@ -98,8 +121,8 @@ async function confirm(): Promise<void> {
         @click="remember($event); takeVisible = true"
       />
     </div>
-    <p v-if="store.snapshots.length === 0" class="snapshot-empty">No snapshots.</p>
-    <article v-for="snapshot in store.snapshots" :key="snapshot.id" class="snapshot-row">
+    <p v-if="!session?.snapshots.length" class="snapshot-empty">No snapshots.</p>
+    <article v-for="snapshot in session?.snapshots ?? []" :key="snapshot.id" class="snapshot-row">
       <div class="min-w-0">
         <strong>{{ snapshot.name || 'Untitled snapshot' }}</strong>
         <span class="snapshot-metadata">{{ new Date(snapshot.createdAt).toLocaleString() }} · {{ snapshot.wordCount }} words</span>
@@ -139,7 +162,7 @@ async function confirm(): Promise<void> {
       </div>
     </article>
 
-    <TakeSnapshotDialog :visible="takeVisible" :dirty="store.isDirty" @close="closeAll" @confirm="take" />
+    <TakeSnapshotDialog :visible="takeVisible" :dirty="Boolean(session?.isDirty)" @close="closeAll" @confirm="take" />
     <TakeSnapshotDialog
       :visible="renameVisible"
       :dirty="false"
@@ -157,7 +180,7 @@ async function confirm(): Promise<void> {
     />
     <SnapshotCompareDialog
       :visible="compareVisible"
-      :current-text="store.contentText"
+      :current-text="session?.contentText ?? ''"
       :snapshot-text="selectedDetail?.contentText ?? ''"
       :loading="detailLoading"
       :error="detailError"

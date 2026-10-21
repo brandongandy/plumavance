@@ -32,7 +32,7 @@ function mountTree() {
       plugins: [pinia, [PrimeVue, { unstyled: true }]],
       provide: {
         [UnsavedGuardKey as symbol]: {
-          canTransition: () => true,
+          canDiscard: () => true,
           runGuarded: (action: () => unknown) => action(),
         },
       },

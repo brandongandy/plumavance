@@ -76,7 +76,7 @@ async function mountedInspector() {
   await store.load(documentId)
   const wrapper = mount(InspectorPane, {
     attachTo: document.body,
-    props: { notes: '', hasDocument: true },
+    props: { documentId },
     global: { plugins: [pinia, [PrimeVue, { unstyled: true }]] },
   })
   await wrapper.get('button[role="tab"]:nth-child(2)').trigger('click')
@@ -85,6 +85,31 @@ async function mountedInspector() {
 }
 
 describe('snapshot inspector', () => {
+  test('changing_the_focused_document_closes_dialogs_and_ignores_late_snapshot_details', async () => {
+    // Catches stale snapshot previews and confirmation dialogs leaking into the next focused document.
+    const { wrapper, store } = await mountedInspector()
+    const secondId = '44444444-4444-4444-8444-444444444444'
+    let resolveDetail!: (snapshot: SnapshotDto) => void
+    vi.spyOn(snapshotApi, 'get').mockImplementation(() => new Promise((resolve) => { resolveDetail = resolve }))
+    vi.spyOn(documentApi, 'get').mockResolvedValue({ ...documentFixture(), id: secondId, notesText: 'Second notes' })
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    await wrapper.get('[aria-label="Preview First pass"]').trigger('click')
+    await flushPromises()
+    expect(document.body.textContent).toContain('Loading snapshot')
+    await store.load(secondId)
+    await wrapper.setProps({ documentId: secondId })
+    resolveDetail(snapshotFixture)
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Snapshot preview"]')).toBeNull()
+    expect(wrapper.text()).toContain('No snapshots')
+    await wrapper.setProps({ documentId })
+    await wrapper.get('[aria-label="Restore First pass"]').trigger('click')
+    await wrapper.setProps({ documentId: secondId })
+    await flushPromises()
+    expect(document.querySelector('[aria-label="Confirm restore snapshot"]')).toBeNull()
+    wrapper.unmount()
+  })
+
   test('targets_explicit_document_ids_for_snapshot_create_rename_restore_and_delete', async () => {
     setActivePinia(createPinia())
     const secondDocumentId = '44444444-4444-4444-8444-444444444444'

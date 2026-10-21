@@ -12,10 +12,8 @@ import BinderTree from '../features/binder/BinderTree.vue'
 import FolderContents from '../features/binder/FolderContents.vue'
 import CompileDialog from '../features/compile/CompileDialog.vue'
 import { useCompile } from '../features/compile/useCompile.js'
-import DocumentEditor from '../features/editor/DocumentEditor.vue'
-import DocumentHeader from '../features/editor/DocumentHeader.vue'
 import EditorTabs from '../features/editor/EditorTabs.vue'
-import SaveStatus from '../features/editor/SaveStatus.vue'
+import SplitEditor from '../features/editor/SplitEditor.vue'
 import FocusExitButton from '../features/focus/FocusExitButton.vue'
 import { useFocusMode } from '../features/focus/useFocusMode.js'
 import InspectorPane from '../features/inspector/InspectorPane.vue'
@@ -30,8 +28,8 @@ const route = useRoute()
 const store = useWorkspaceStore()
 const documentStore = useDocumentStore()
 const writingProgress = useWritingProgressStore()
-const unsavedGuard = useUnsavedGuard(() => documentStore.isDirty)
-onBeforeRouteUpdate((to, from) => to.params.projectId === from.params.projectId || unsavedGuard.canTransition())
+const unsavedGuard = useUnsavedGuard((ids) => documentStore.hasDirtySessions(ids))
+onBeforeRouteUpdate((to, from) => to.params.projectId === from.params.projectId || unsavedGuard.canDiscard())
 const compileTask = useCompile()
 const compileVisible = ref(false)
 const compileTrigger = ref<HTMLElement | null>(null)
@@ -40,12 +38,21 @@ const settingsTrigger = ref<HTMLElement | null>(null)
 const workspaceRoot = ref<HTMLElement | null>(null)
 const focusMode = useFocusMode(workspaceRoot)
 const layout = ref<WorkspaceLayout>(layoutForWidth(window.innerWidth))
+const focusedSession = computed(() => documentStore.sessionFor(store.activeTabId ?? ''))
+const singlePane = computed(() => layout.value === 'phone' || focusMode.isActive.value)
+const splitRatio = computed(() => store.splitOrientation ? store.splitRatios[store.splitOrientation] : 0.5)
 const activeDocumentReady = computed(() =>
   store.activeItem?.kind === 'document'
-  && documentStore.documentId === store.activeItem.id
-  && !documentStore.loading,
+  && Boolean(focusedSession.value?.savedBuffer)
+  && !focusedSession.value?.loading,
 )
-const canSave = computed(() => activeDocumentReady.value && documentStore.saveState !== 'saving' && documentStore.isDirty)
+const canSave = computed(() => activeDocumentReady.value && focusedSession.value?.saveState !== 'saving' && Boolean(focusedSession.value?.isDirty))
+const focusedCounts = computed(() => activeDocumentReady.value && focusedSession.value
+  ? focusedSession.value.counts : { words: 0, characters: 0 })
+const projectWords = computed(() => writingProgress.liveProjectWordCount(
+  focusedCounts.value.words,
+  activeDocumentReady.value ? focusedSession.value?.savedWordCount ?? 0 : 0,
+))
 
 const folderChildren = computed(() => {
   const active = store.activeItem
@@ -105,11 +112,10 @@ function openCompileFromKeyboard(): void {
 }
 
 async function enterFocusMode(): Promise<void> {
-  const editor = workspaceRoot.value?.querySelector<HTMLElement>('[aria-label="Document editor"]')
-  if (!editor) return
+  if (!activeDocumentReady.value) return
   await focusMode.enter()
   await nextTick()
-  editor.focus({ preventScroll: true })
+  workspaceRoot.value?.querySelector<HTMLElement>('.editor-document-pane.is-focused [contenteditable="true"]')?.focus({ preventScroll: true })
 }
 
 function handleWorkspaceShortcut(event: KeyboardEvent): void {
@@ -147,62 +153,43 @@ async function runCompile(request: CompileRequest): Promise<void> {
 }
 
 async function openFolderItem(itemId: string): Promise<void> {
-  if (itemId !== store.activeItemId && !unsavedGuard.canTransition()) return
   const item = store.items.find((candidate) => candidate.id === itemId)
-  if (item?.kind === 'document') store.replaceActiveDocument(item.id)
+  if (item?.kind === 'document') {
+    const removedIds = store.openDocumentIds.includes(item.id) || !store.activeTabId ? [] : [store.activeTabId]
+    if (!unsavedGuard.canDiscard(removedIds)) return
+    store.replaceActiveDocument(item.id)
+  }
   else if (item) store.activeItemId = item.id
 }
 
 function activateTab(itemId: string): void {
-  if (itemId !== store.activeItemId && !unsavedGuard.canTransition()) return
   store.activateTab(itemId)
 }
 
 function closeTab(itemId: string, closeOthers: boolean): void {
-  const changesActiveDocument = closeOthers
-    ? store.activeItemId !== itemId
-    : store.activeTabId === itemId && store.activeItemId === itemId
-  if (changesActiveDocument && !unsavedGuard.canTransition()) return
+  const removedIds = closeOthers ? store.openDocumentIds.filter((id) => id !== itemId) : [itemId]
+  if (!unsavedGuard.canDiscard(removedIds)) return
   if (closeOthers) store.closeOtherDocumentTabs(itemId)
   else store.closeDocumentTab(itemId)
 }
 
 async function saveDocument(): Promise<void> {
-  if (!activeDocumentReady.value) return
-  if (!(await documentStore.save()) || !documentStore.documentId) return
+  const id = store.activeTabId
+  if (!activeDocumentReady.value || !id) return
+  if (!(await documentStore.save(id))) return
+  const session = documentStore.sessionFor(id)
+  if (session) documentSaved(id, session.title)
+}
+
+function documentSaved(id: string, title: string): void {
   store.items = store.items.map((item) =>
-    item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
+    item.id === id ? { ...item, title } : item,
   )
 }
 
-async function keepMine(): Promise<void> {
-  if (!(await documentStore.keepMine()) || !documentStore.documentId) return
-  store.items = store.items.map((item) =>
-    item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
-  )
+function resizeSplit(ratio: number): void {
+  if (store.splitOrientation) store.setSplitRatio(store.splitOrientation, ratio)
 }
-
-async function reloadServerCopy(): Promise<void> {
-  if (!(await documentStore.reloadServerCopy()) || !documentStore.documentId) return
-  store.items = store.items.map((item) =>
-    item.id === documentStore.documentId ? { ...item, title: documentStore.title } : item,
-  )
-  await writingProgress.refresh()
-}
-
-async function retryDocumentLoad(): Promise<void> {
-  const item = store.activeItem
-  if (item?.kind === 'document') await documentStore.load(item.id, () => true, true)
-}
-
-watch(
-  () => store.activeItemId,
-  async (itemId) => {
-    const item = store.items.find((candidate) => candidate.id === itemId)
-    if (item?.kind === 'document') await documentStore.load(item.id, () => true, true)
-    else documentStore.clear()
-  },
-)
 
 onMounted(() => {
   window.addEventListener('resize', updateLayout)
@@ -248,8 +235,12 @@ onBeforeUnmount(() => {
             v-if="store.openDocuments.length"
             :tabs="store.openDocuments"
             :active-id="store.activeItem?.kind === 'document' ? store.activeTabId : null"
+            :split-ids="store.splitDocumentIds"
+            :split-orientation="store.splitOrientation"
             @activate="activateTab"
             @close="closeTab"
+            @split="store.enterSplit"
+            @exit-split="store.exitSplit"
           />
           <div class="workspace-main-content">
             <FolderContents
@@ -258,39 +249,27 @@ onBeforeUnmount(() => {
               :items="folderChildren"
               @open="openFolderItem($event.id)"
             />
-            <div v-else-if="store.activeItem?.kind === 'document'" class="editor-document-pane">
-              <p v-if="documentStore.loading" role="status" class="workspace-message">Opening document…</p>
-              <template v-else-if="documentStore.documentId === store.activeItem.id">
-                <DocumentHeader :model-value="documentStore.title" @update:model-value="documentStore.setTitle" />
-                <SaveStatus
-                  :state="documentStore.saveState"
-                  :message="documentStore.errorMessage"
-                  @retry="saveDocument"
-                  @reload="reloadServerCopy"
-                  @keep-mine="keepMine"
-                />
-                <DocumentEditor
-                  :model-value="documentStore.contentJson"
-                  :focus-mode="focusMode.isActive.value"
-                  @update:model-value="documentStore.setContent"
-                  @save="saveDocument"
-                  @word-count-delta="writingProgress.recordEditorDelta"
-                />
-              </template>
-              <div v-else role="alert" class="workspace-message">
-                <span>{{ documentStore.errorMessage || 'The document could not be opened.' }}</span>
-                <button type="button" @click="retryDocumentLoad">Retry</button>
-              </div>
-            </div>
+            <SplitEditor
+              v-else-if="store.activeItem?.kind === 'document'"
+              :document-ids="store.renderedDocumentIds"
+              :focused-id="store.activeTabId"
+              :orientation="store.splitOrientation"
+              :ratio="splitRatio"
+              :single-pane="singlePane"
+              :focus-mode="focusMode.isActive.value"
+              @focus="store.activateTab"
+              @resize="resizeSplit"
+              @saved="documentSaved"
+              @word-count-delta="writingProgress.recordEditorDelta"
+            />
             <p v-else class="workspace-empty">Select or create a document.</p>
           </div>
         </main>
       </template>
       <template #inspector>
         <InspectorPane
-          :notes="documentStore.notesText"
-          :has-document="activeDocumentReady"
-          @update:notes="documentStore.setNotes"
+          :document-id="activeDocumentReady ? store.activeTabId : null"
+          @saved="documentSaved"
         />
       </template>
     </WorkspacePanes>
@@ -301,15 +280,15 @@ onBeforeUnmount(() => {
       @select="selectPanel"
     />
     <StatusBar
-      :item-title="store.activeItem?.title"
-      :save-state="documentStore.saveState"
-      :words="documentStore.counts.words"
-      :characters="documentStore.counts.characters"
-      :project-words="writingProgress.liveProjectWordCount(documentStore.counts.words, documentStore.savedWordCount)"
+      :item-title="store.activeItem?.kind === 'document' ? focusedSession?.title : store.activeItem?.title"
+      :save-state="activeDocumentReady ? focusedSession?.saveState ?? 'saved' : 'saved'"
+      :words="focusedCounts.words"
+      :characters="focusedCounts.characters"
+      :project-words="projectWords"
     />
     <CompileDialog
       :visible="compileVisible"
-      :dirty="activeDocumentReady && documentStore.isDirty"
+      :dirty="activeDocumentReady && Boolean(focusedSession?.isDirty)"
       :busy="compileTask.compiling.value"
       :error="compileTask.error.value"
       @close="closeCompile"
