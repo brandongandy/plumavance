@@ -5,7 +5,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import InspectorPane from '../src/features/inspector/InspectorPane.vue'
-import SnapshotCompareDialog from '../src/features/inspector/SnapshotCompareDialog.vue'
+import SnapshotPane from '../src/features/inspector/SnapshotPane.vue'
 import { documentApi } from '../src/api/documents.js'
 import { snapshotApi } from '../src/api/snapshots.js'
 import { useDocumentStore } from '../src/stores/document.js'
@@ -117,22 +117,19 @@ describe('snapshot inspector', () => {
     expect(store.sessionFor(documentId)?.snapshots).toEqual(succeeds ? [created, snapshotSummaryFixture] : [snapshotSummaryFixture])
   })
 
-  test('changing_the_focused_document_closes_dialogs_and_ignores_late_snapshot_details', async () => {
-    // Catches stale snapshot previews and confirmation dialogs leaking into the next focused document.
+  test('emits_snapshot_open_requests_and_closes_confirmation_dialogs_when_focus_changes', async () => {
+    // Catches snapshot actions targeting the wrong document or confirmations leaking into the next one.
     const { wrapper, store } = await mountedInspector()
     const secondId = '44444444-4444-4444-8444-444444444444'
-    let resolveDetail!: (snapshot: SnapshotDto) => void
-    vi.spyOn(snapshotApi, 'get').mockImplementation(() => new Promise((resolve) => { resolveDetail = resolve }))
     vi.spyOn(documentApi, 'get').mockResolvedValue({ ...documentFixture(), id: secondId, notesText: 'Second notes' })
     vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
     await wrapper.get('[aria-label="Preview First pass"]').trigger('click')
-    await flushPromises()
-    expect(document.body.textContent).toContain('Loading snapshot')
+    expect(wrapper.emitted('openSnapshot')).toEqual([[
+      { documentId, mode: 'preview', snapshot: snapshotSummaryFixture },
+    ]])
     await store.load(secondId)
     await wrapper.setProps({ documentId: secondId })
-    resolveDetail(snapshotFixture)
     await flushPromises()
-    expect(document.querySelector('[aria-label="Snapshot preview"]')).toBeNull()
     expect(wrapper.text()).toContain('No snapshots')
     await wrapper.setProps({ documentId })
     await wrapper.get('[aria-label="Restore First pass"]').trigger('click')
@@ -328,36 +325,29 @@ describe('snapshot inspector', () => {
     expect(document.activeElement).toBe(trigger.element)
   })
 
-  test('previews_compares_renames_restores_and_deletes_with_confirmation', async () => {
+  test('requests_preview_and_compare_then_restores_and_deletes_with_confirmation', async () => {
     const { wrapper, store, requests } = await mountedInspector()
     await wrapper.get('button[aria-label="Preview First pass"]').trigger('click')
-    await flushPromises()
-    expect(document.querySelector('[aria-label="Snapshot preview"]')?.textContent).toContain('Earlier prose')
-    ;(document.querySelector('button[aria-label="Close snapshot preview"]') as HTMLButtonElement).click()
-    await flushPromises()
-
     await wrapper.get('button[aria-label="Compare First pass"]').trigger('click')
-    await flushPromises()
-    expect(document.body.textContent).toContain('Removed: Earlier')
-    expect(document.body.textContent).toContain('Added: Current')
-    expect(document.body.textContent).toContain('Added: saved')
-    ;(document.querySelector('button[aria-label="Close snapshot comparison"]') as HTMLButtonElement).click()
-    await flushPromises()
-    expect(requests.filter((request) => request.path === `/api/snapshots/${snapshotId}`)).toHaveLength(2)
+    expect(wrapper.emitted('openSnapshot')).toEqual([
+      [{ documentId, mode: 'preview', snapshot: snapshotSummaryFixture }],
+      [{ documentId, mode: 'compare', snapshot: snapshotSummaryFixture }],
+    ])
+    expect(requests.filter((request) => request.path === `/api/snapshots/${snapshotId}`)).toHaveLength(0)
 
     await wrapper.get('button[aria-label="Restore First pass"]').trigger('click')
     await flushPromises()
     ;(document.querySelector('button[aria-label="Confirm restore snapshot"]') as HTMLButtonElement).click()
     await flushPromises()
     expect(store.sessionFor(documentId)!.contentText).toBe('Earlier prose')
-    expect(requests.filter((request) => request.path === `/api/snapshots/${snapshotId}`)).toHaveLength(2)
+    expect(requests.filter((request) => request.path === `/api/snapshots/${snapshotId}`)).toHaveLength(0)
 
     await wrapper.get('button[aria-label="Delete First pass"]').trigger('click')
     await flushPromises()
     ;(document.querySelector('button[aria-label="Confirm delete snapshot"]') as HTMLButtonElement).click()
     await flushPromises()
     expect(requests.some((request) => request.method === 'DELETE')).toBe(true)
-    expect(requests.filter((request) => request.path === `/api/snapshots/${snapshotId}` && request.method === 'GET')).toHaveLength(2)
+    expect(requests.filter((request) => request.path === `/api/snapshots/${snapshotId}` && request.method === 'GET')).toHaveLength(0)
   })
 
   test('retains_snapshot_detail_for_its_session_after_loading_another_document', async () => {
@@ -432,7 +422,7 @@ describe('snapshot inspector', () => {
   })
 
   test('an_older_snapshot_failure_cannot_replace_a_successful_retry', async () => {
-    const { wrapper, store } = await mountedInspector()
+    const { store } = await mountedInspector()
     const pending: Array<{
       resolve: (snapshot: SnapshotDto) => void
       reject: (error: Error) => void
@@ -441,36 +431,37 @@ describe('snapshot inspector', () => {
       () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
     )
 
-    await wrapper.get('button[aria-label="Preview First pass"]').trigger('click')
-    await flushPromises()
-    expect(document.body.textContent).toContain('Loading snapshot…')
-    ;(document.querySelector('button[aria-label="Close snapshot preview"]') as HTMLButtonElement).click()
-    await flushPromises()
-
-    await wrapper.get('button[aria-label="Preview First pass"]').trigger('click')
+    const older = store.loadSnapshotDetail(documentId, snapshotId)
+    const newer = store.loadSnapshotDetail(documentId, snapshotId)
     pending[1]?.resolve(snapshotFixture)
-    await flushPromises()
-    expect(document.querySelector('[aria-label="Snapshot preview"]')?.textContent).toContain('Earlier prose')
+    await expect(newer).resolves.toEqual(snapshotFixture)
 
     pending[0]?.reject(new Error('Older request failed'))
-    await flushPromises()
-    const preview = document.querySelector('[aria-label="Snapshot preview"]')
-    expect(preview).not.toBeNull()
-    expect(preview?.textContent).toContain('Earlier prose')
-    expect(document.querySelector('[role="alert"]')).toBeNull()
+    await expect(older).resolves.toBeUndefined()
     expect(store.sessionFor(documentId)!.errorMessage).toBe('')
   })
 
   test('renders_an_accessible_readable_comparison', async () => {
-    const wrapper = mount(SnapshotCompareDialog, {
+    setActivePinia(createPinia())
+    const wrapper = mount(SnapshotPane, {
       attachTo: document.body,
-      props: { visible: true, currentText: 'New text', snapshotText: 'Old text' },
+      props: {
+        view: {
+          mode: 'compare',
+          summary: snapshotSummaryFixture,
+          detail: { ...snapshotFixture, contentText: 'Old text' },
+          currentText: 'New text',
+          loading: false,
+          error: '',
+        },
+      },
       global: { plugins: [[PrimeVue, { unstyled: true }]] },
     })
     await flushPromises()
-    expect(document.body.querySelector('del')).toBeTruthy()
-    expect(document.body.querySelector('ins')).toBeTruthy()
-    expect(document.body.textContent).toContain('Removed: Old')
+    expect(wrapper.get('del').text()).toContain('Removed: Old')
+    expect(wrapper.get('ins').text()).toContain('Added: New')
+    expect(wrapper.attributes('aria-label')).toBe('First pass snapshot comparison')
+    expect(wrapper.get('[aria-label="Snapshot comparison"]').attributes('tabindex')).toBe('0')
     wrapper.unmount()
   })
 })

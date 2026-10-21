@@ -62,6 +62,43 @@ afterEach(() => {
 })
 
 describe('split document panes', () => {
+  test('replaces_the_unfocused_participant_with_a_snapshot_and_emits_close', async () => {
+    // Catches snapshot panes being appended as a third participant or closing without exiting split.
+    const wrapper = mountSplit({
+      orientation: 'horizontal',
+      focusedId: secondId,
+      snapshot: {
+        mode: 'preview',
+        summary: {
+          id: '55555555-5555-4555-8555-555555555555',
+          documentId: secondId,
+          name: 'First pass',
+          wordCount: 2,
+          createdAt: '2026-10-10T00:01:00.000Z',
+        },
+        detail: {
+          id: '55555555-5555-4555-8555-555555555555',
+          documentId: secondId,
+          name: 'First pass',
+          contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Earlier prose' }] }] },
+          contentText: 'Earlier prose',
+          createdAt: '2026-10-10T00:01:00.000Z',
+        },
+        currentText: 'Current prose',
+        loading: false,
+        error: '',
+      },
+    } as never)
+    await flushPromises()
+
+    expect(wrapper.findAll('[data-document-pane]')).toHaveLength(1)
+    expect(wrapper.get(`[data-document-pane="${secondId}"]`).exists()).toBe(true)
+    expect(wrapper.get('[data-snapshot-pane]').attributes('aria-label')).toBe('First pass snapshot preview')
+    expect(wrapper.get('[role="separator"]').attributes('aria-orientation')).toBe('horizontal')
+    await wrapper.get('[aria-label="Close snapshot pane"]').trigger('click')
+    expect(wrapper.emitted('closeSnapshot')).toEqual([[]])
+  })
+
   test('renders_and_edits_two_keyed_document_sessions', async () => {
     const wrapper = mountSplit()
     await flushPromises()

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { SnapshotDto, SnapshotSummaryDto } from '@pluma/shared'
+import type { SnapshotSummaryDto } from '@pluma/shared'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -7,23 +7,18 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import TooltipButton from '../../components/controls/TooltipButton.vue'
 import { provideTooltipGroup } from '../../components/controls/tooltipGroup.js'
 import { useDocumentStore } from '../../stores/document.js'
-import SnapshotCompareDialog from './SnapshotCompareDialog.vue'
-import SnapshotPreviewDialog from './SnapshotPreviewDialog.vue'
+import type { SnapshotOpenRequest, SnapshotPaneMode } from './snapshotPane.js'
 import TakeSnapshotDialog from './TakeSnapshotDialog.vue'
 
 const props = defineProps<{ documentId: string }>()
+const emit = defineEmits<{ openSnapshot: [request: SnapshotOpenRequest] }>()
 const store = useDocumentStore()
 const session = computed(() => store.sessionFor(props.documentId))
 provideTooltipGroup()
 const takeVisible = ref(false)
 const renameVisible = ref(false)
-const previewVisible = ref(false)
-const compareVisible = ref(false)
 const confirmAction = ref<'restore' | 'delete' | null>(null)
 const selected = ref<SnapshotSummaryDto | null>(null)
-const selectedDetail = ref<SnapshotDto | null>(null)
-const detailLoading = ref(false)
-const detailError = ref('')
 const returnFocus = ref<HTMLElement | null>(null)
 let detailSequence = 0
 
@@ -35,13 +30,8 @@ function resetDialogs(): void {
   detailSequence += 1
   takeVisible.value = false
   renameVisible.value = false
-  previewVisible.value = false
-  compareVisible.value = false
   confirmAction.value = null
   selected.value = null
-  selectedDetail.value = null
-  detailLoading.value = false
-  detailError.value = ''
 }
 
 watch(() => props.documentId, () => {
@@ -61,23 +51,13 @@ function selectSnapshot(snapshot: SnapshotSummaryDto, event: Event): void {
   remember(event)
 }
 
-async function openDetail(
+function openDetail(
   snapshot: SnapshotSummaryDto,
   event: Event,
-  mode: 'preview' | 'compare',
-): Promise<void> {
+  mode: SnapshotPaneMode,
+): void {
   selectSnapshot(snapshot, event)
-  selectedDetail.value = null
-  detailError.value = ''
-  detailLoading.value = true
-  if (mode === 'preview') previewVisible.value = true
-  else compareVisible.value = true
-  const sequence = ++detailSequence
-  const detail = await store.loadSnapshotDetail(props.documentId, snapshot.id)
-  if (sequence !== detailSequence || selected.value?.id !== snapshot.id) return
-  detailLoading.value = false
-  if (detail) selectedDetail.value = detail
-  else detailError.value = session.value?.errorMessage || 'The snapshot could not be loaded.'
+  emit('openSnapshot', { documentId: props.documentId, mode, snapshot })
 }
 
 async function take(name: string, saveFirst: boolean): Promise<void> {
@@ -165,21 +145,6 @@ async function confirm(): Promise<void> {
       :initial-name="selected?.name ?? ''"
       @close="closeAll"
       @confirm="rename($event)"
-    />
-    <SnapshotPreviewDialog
-      :visible="previewVisible"
-      :snapshot="selectedDetail"
-      :loading="detailLoading"
-      :error="detailError"
-      @close="closeAll"
-    />
-    <SnapshotCompareDialog
-      :visible="compareVisible"
-      :current-text="session?.contentText ?? ''"
-      :snapshot-text="selectedDetail?.contentText ?? ''"
-      :loading="detailLoading"
-      :error="detailError"
-      @close="closeAll"
     />
     <Dialog
       :visible="Boolean(confirmAction)"

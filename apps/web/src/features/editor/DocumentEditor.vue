@@ -14,7 +14,8 @@ const props = withDefaults(defineProps<{
   focusMode?: boolean
   ariaLabel?: string
   scrollTop?: number
-}>(), { ariaLabel: 'Document editor', scrollTop: 0 })
+  toolbar?: boolean
+}>(), { ariaLabel: 'Document editor', scrollTop: 0, toolbar: true })
 const emit = defineEmits<{
   'update:modelValue': [value: EditorDocument]
   'update:scrollTop': [value: number]
@@ -80,7 +81,8 @@ watch(() => props.scrollTop, restoreScroll, { flush: 'post' })
 
 function handleKeydown(event: KeyboardEvent): void {
   if (
-    event.defaultPrevented
+    props.readonly
+    || event.defaultPrevented
     || event.repeat
     || event.shiftKey
     || event.altKey
@@ -104,10 +106,13 @@ onBeforeUnmount(() => editor.value?.destroy())
 
 <template>
   <div data-document-editor class="document-editor" @keydown="handleKeydown" @keyup="handleKeyup">
-    <EditorToolbar :editor="editor ?? null" />
+    <EditorToolbar v-if="toolbar" :editor="editor ?? null" />
     <div
       ref="scrollContainer"
       class="document-scroll"
+      :role="readonly ? 'document' : undefined"
+      :tabindex="readonly ? 0 : undefined"
+      :aria-label="readonly ? `${ariaLabel} reading area` : undefined"
       @scroll.passive="emit('update:scrollTop', ($event.target as HTMLElement).scrollTop)"
       @wheel.passive="typewriter.noteManualScroll"
       @pointerdown="typewriter.noteManualScroll"

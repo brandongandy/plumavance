@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { CompileRequest } from '@pluma/shared'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import type { CompileRequest, SnapshotDto } from '@pluma/shared'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { onBeforeRouteUpdate, useRoute } from 'vue-router'
 
 import AppToolbar from '../components/layout/AppToolbar.vue'
@@ -17,6 +17,7 @@ import SplitEditor from '../features/editor/SplitEditor.vue'
 import FocusExitButton from '../features/focus/FocusExitButton.vue'
 import { useFocusMode } from '../features/focus/useFocusMode.js'
 import InspectorPane from '../features/inspector/InspectorPane.vue'
+import type { SnapshotOpenRequest, SnapshotPaneState } from '../features/inspector/snapshotPane.js'
 import SettingsDialog from '../features/settings/SettingsDialog.vue'
 import { useDocumentStore } from '../stores/document.js'
 import { useWorkspaceStore, type WorkspacePanel } from '../stores/workspace.js'
@@ -29,7 +30,7 @@ const store = useWorkspaceStore()
 const documentStore = useDocumentStore()
 const writingProgress = useWritingProgressStore()
 let workspaceActive = true
-// The workspace outlives suspended editors and snapshot dialogs. Only accepted
+// The workspace outlives suspended editors and snapshot operations. Only accepted
 // operations on the same session may synchronize project presentation here.
 documentStore.$onAction(({ name, args, after }) => {
   if (name !== 'save' && name !== 'keepMine' && name !== 'reloadServerCopy') return
@@ -49,11 +50,20 @@ const compileTrigger = ref<HTMLElement | null>(null)
 const settingsVisible = ref(false)
 const settingsTrigger = ref<HTMLElement | null>(null)
 const workspaceRoot = ref<HTMLElement | null>(null)
+const snapshotPane = shallowRef<SnapshotPaneState | null>(null)
+const snapshotReturnFocus = shallowRef<HTMLElement | null>(null)
+let snapshotSequence = 0
 const focusMode = useFocusMode(workspaceRoot)
 const layout = ref<WorkspaceLayout>(layoutForWidth(window.innerWidth))
 const focusedSession = computed(() => documentStore.sessionFor(store.activeTabId ?? ''))
 const singlePane = computed(() => layout.value === 'phone' || focusMode.isActive.value)
-const splitRatio = computed(() => store.splitOrientation ? store.splitRatios[store.splitOrientation] : 0.5)
+const editorSplitOrientation = computed(() => snapshotPane.value
+  ? store.splitOrientation ?? 'vertical'
+  : store.splitOrientation)
+const splitRatio = computed(() => editorSplitOrientation.value ? store.splitRatios[editorSplitOrientation.value] : 0.5)
+const displayedSplitIds = computed(() => snapshotPane.value
+  ? [snapshotPane.value.summary.documentId]
+  : store.splitDocumentIds)
 const activeDocumentReady = computed(() =>
   store.activeItem?.kind === 'document'
   && Boolean(focusedSession.value?.savedBuffer)
@@ -200,7 +210,71 @@ function documentSaved(id: string, title: string): void {
 }
 
 function resizeSplit(ratio: number): void {
-  if (store.splitOrientation) store.setSplitRatio(store.splitOrientation, ratio)
+  if (editorSplitOrientation.value) store.setSplitRatio(editorSplitOrientation.value, ratio)
+}
+
+async function closeSnapshotPane(restoreFocus = true): Promise<void> {
+  snapshotSequence += 1
+  snapshotPane.value = null
+  store.exitSplit()
+  await nextTick()
+  if (!restoreFocus) {
+    snapshotReturnFocus.value = null
+    return
+  }
+  const trigger = snapshotReturnFocus.value
+  snapshotReturnFocus.value = null
+  if (layout.value === 'desktop' && store.inspectorOpen && !focusMode.isActive.value && trigger?.isConnected) {
+    trigger.focus({ preventScroll: true })
+    return
+  }
+  workspaceRoot.value
+    ?.querySelector<HTMLElement>(`[data-tab-id="${store.activeTabId}"] .editor-tab-title`)
+    ?.focus({ preventScroll: true })
+}
+
+function exitEditorSplit(): void {
+  if (snapshotPane.value) void closeSnapshotPane()
+  else store.exitSplit()
+}
+
+async function openSnapshotPane(request: SnapshotOpenRequest): Promise<void> {
+  if (request.documentId !== store.activeTabId) return
+  const sequence = ++snapshotSequence
+  snapshotReturnFocus.value = document.activeElement instanceof HTMLElement ? document.activeElement : null
+  snapshotPane.value = {
+    mode: request.mode,
+    summary: request.snapshot,
+    detail: null,
+    currentText: documentStore.sessionFor(request.documentId)?.contentText ?? '',
+    loading: true,
+    error: '',
+  }
+  store.activePanel = 'editor'
+  await nextTick()
+  workspaceRoot.value
+    ?.querySelector<HTMLElement>('[data-snapshot-pane] [aria-label="Close snapshot pane"]')
+    ?.focus({ preventScroll: true })
+  let detail: SnapshotDto | undefined
+  try {
+    detail = await documentStore.loadSnapshotDetail(request.documentId, request.snapshot.id)
+  } catch (error) {
+    if (sequence !== snapshotSequence || snapshotPane.value?.summary.id !== request.snapshot.id) return
+    snapshotPane.value = {
+      ...snapshotPane.value,
+      loading: false,
+      error: error instanceof Error ? error.message : 'The snapshot could not be loaded.',
+    }
+    return
+  }
+  if (sequence !== snapshotSequence || snapshotPane.value?.summary.id !== request.snapshot.id) return
+  snapshotPane.value = detail
+    ? { ...snapshotPane.value, detail, loading: false }
+    : {
+        ...snapshotPane.value,
+        loading: false,
+        error: 'The snapshot could not be loaded.',
+      }
 }
 
 onMounted(() => {
@@ -208,6 +282,9 @@ onMounted(() => {
   window.addEventListener('keydown', handleWorkspaceShortcut)
 })
 watch(() => route.params.projectId, (projectId) => { void store.load(String(projectId)) }, { immediate: true })
+watch(() => store.activeTabId, (id) => {
+  if (snapshotPane.value && id !== snapshotPane.value.summary.documentId) void closeSnapshotPane(false)
+})
 onBeforeUnmount(() => {
   workspaceActive = false
   window.removeEventListener('resize', updateLayout)
@@ -248,12 +325,12 @@ onBeforeUnmount(() => {
             v-if="store.openDocuments.length"
             :tabs="store.openDocuments"
             :active-id="store.activeItem?.kind === 'document' ? store.activeTabId : null"
-            :split-ids="store.splitDocumentIds"
-            :split-orientation="store.splitOrientation"
+            :split-ids="displayedSplitIds"
+            :split-orientation="editorSplitOrientation"
             @activate="activateTab"
             @close="closeTab"
             @split="store.enterSplit"
-            @exit-split="store.exitSplit"
+            @exit-split="exitEditorSplit"
           />
           <div class="workspace-main-content">
             <FolderContents
@@ -266,12 +343,14 @@ onBeforeUnmount(() => {
               v-else-if="store.activeItem?.kind === 'document'"
               :document-ids="store.renderedDocumentIds"
               :focused-id="store.activeTabId"
-              :orientation="store.splitOrientation"
+              :orientation="editorSplitOrientation"
               :ratio="splitRatio"
               :single-pane="singlePane"
               :focus-mode="focusMode.isActive.value"
+              :snapshot="snapshotPane"
               @focus="store.activateTab"
               @resize="resizeSplit"
+              @close-snapshot="closeSnapshotPane"
               @word-count-delta="writingProgress.recordEditorDelta"
             />
             <p v-else class="workspace-empty">Select or create a document.</p>
@@ -281,6 +360,7 @@ onBeforeUnmount(() => {
       <template #inspector>
         <InspectorPane
           :document-id="activeDocumentReady ? store.activeTabId : null"
+          @open-snapshot="openSnapshotPane"
         />
       </template>
     </WorkspacePanes>
