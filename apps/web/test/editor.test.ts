@@ -8,6 +8,7 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import DocumentEditor from '../src/features/editor/DocumentEditor.vue'
 import SaveStatus from '../src/features/editor/SaveStatus.vue'
 import { documentApi } from '../src/api/documents.js'
+import { ApiRequestError } from '../src/api/client.js'
 import { snapshotApi } from '../src/api/snapshots.js'
 import { countText, editorText } from '../src/features/editor/counts.js'
 import { documentExtensions } from '../src/features/editor/documentExtensions.js'
@@ -55,6 +56,125 @@ afterEach(() => {
 })
 
 describe('document editor state', () => {
+  test('keeps_two_document_sessions_editable_and_saveable_independently', async () => {
+    setActivePinia(createPinia())
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    vi.spyOn(documentApi, 'get').mockImplementation(async (id) => documentFixture({ id }))
+    vi.spyOn(documentApi, 'save').mockImplementation(async (id, payload) =>
+      documentFixture({ id, ...payload, revision: 1 }),
+    )
+    const store = useDocumentStore()
+    await Promise.all([store.load(firstId), store.load(secondId)])
+    store.setTitle(firstId, 'First draft')
+    store.setTitle(secondId, 'Second draft')
+    expect(store.dirtyDocumentIds()).toEqual([firstId, secondId])
+    expect(store.dirtyDocumentIds([secondId, 'missing', firstId])).toEqual([secondId, firstId])
+    expect(store.hasDirtySessions([secondId])).toBe(true)
+    expect(store.hasDirtySessions(['missing'])).toBe(false)
+    await store.save(firstId)
+    expect(store.sessionFor(firstId)?.isDirty).toBe(false)
+    expect(store.sessionFor(secondId)?.title).toBe('Second draft')
+    expect(store.sessionFor(secondId)?.isDirty).toBe(true)
+  })
+
+  test('isolates_a_conflict_and_late_response_to_the_matching_session', async () => {
+    setActivePinia(createPinia())
+    let resolveFirst: ((value: DocumentDto) => void) | undefined
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    vi.spyOn(documentApi, 'get').mockImplementation((id) => id === firstId
+      ? new Promise((resolve) => { resolveFirst = resolve })
+      : Promise.resolve(documentFixture({ id })))
+    vi.spyOn(documentApi, 'save').mockRejectedValue(new ApiRequestError(409, {
+      code: 'DOCUMENT_CONFLICT', message: 'Changed elsewhere.',
+      details: { currentRevision: 3, savedAt: 'later' },
+    }))
+    const store = useDocumentStore()
+    const firstLoad = store.load(firstId)
+    await store.load(secondId)
+    store.setTitle(secondId, 'Local second')
+    await store.save(secondId)
+    resolveFirst?.(documentFixture({ title: 'First from server' }))
+    await firstLoad
+    expect(store.sessionFor(firstId)?.title).toBe('First from server')
+    expect(store.sessionFor(secondId)?.saveState).toBe('conflict')
+    expect(store.sessionFor(firstId)?.saveState).not.toBe('conflict')
+  })
+
+  test('retains_cached_edits_and_scroll_until_an_explicit_forced_reload', async () => {
+    setActivePinia(createPinia())
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    const get = vi.spyOn(documentApi, 'get').mockImplementation(async (id) => documentFixture({ id }))
+    const store = useDocumentStore()
+    await Promise.all([store.load(firstId), store.load(secondId)])
+    store.setTitle(firstId, 'Local title')
+    store.setScrollTop(firstId, 210)
+    store.setScrollTop(secondId, 45)
+    await store.load(firstId)
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(store.sessionFor(firstId)?.title).toBe('Local title')
+    expect(store.sessionFor(firstId)?.scrollTop).toBe(210)
+    expect(store.sessionFor(secondId)?.scrollTop).toBe(45)
+    expect(store.sessionFor(secondId)?.isDirty).toBe(false)
+    await store.reloadServerCopy(firstId)
+    expect(store.sessionFor(firstId)?.title).toBe('Chapter One')
+    expect(store.sessionFor(firstId)?.isDirty).toBe(false)
+  })
+
+  test.each(['discard', 'clear'] as const)('%s_invalidates_pending_loads_even_when_the_id_is_reopened', async (action) => {
+    setActivePinia(createPinia())
+    let resolveFirst: ((value: DocumentDto) => void) | undefined
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    vi.spyOn(documentApi, 'get')
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve }))
+      .mockResolvedValue(documentFixture({ title: 'Reopened' }))
+    const store = useDocumentStore()
+    const pending = store.load(firstId)
+    if (action === 'discard') store.discard(firstId)
+    else store.clear()
+    expect(store.sessionFor(firstId)).toBeUndefined()
+    await store.load(firstId)
+    resolveFirst?.(documentFixture({ title: 'Stale' }))
+    expect(await pending).toBe(false)
+    expect(store.sessionFor(firstId)?.title).toBe('Reopened')
+    expect(store.hasDirtySessions()).toBe(false)
+  })
+
+  test('a_forced_reload_invalidates_an_older_save_without_overwriting_newer_edits', async () => {
+    setActivePinia(createPinia())
+    let resolveSave: ((value: DocumentDto) => void) | undefined
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    vi.spyOn(documentApi, 'get').mockResolvedValue(documentFixture())
+    vi.spyOn(documentApi, 'save').mockImplementation(() => new Promise((resolve) => { resolveSave = resolve }))
+    const store = useDocumentStore()
+    await store.load(firstId)
+    store.setTitle(firstId, 'Old save')
+    const pending = store.save(firstId)
+    await store.load(firstId, true)
+    store.setTitle(firstId, 'New local edit')
+    resolveSave?.(documentFixture({ title: 'Old save', revision: 1 }))
+    expect(await pending).toBe(false)
+    expect(store.sessionFor(firstId)?.title).toBe('New local edit')
+    expect(store.sessionFor(firstId)?.revision).toBe(0)
+  })
+
+  test('retains_edits_made_during_a_save_and_updates_only_the_saved_baseline', async () => {
+    setActivePinia(createPinia())
+    let resolveSave: ((value: DocumentDto) => void) | undefined
+    vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
+    vi.spyOn(documentApi, 'get').mockResolvedValue(documentFixture())
+    vi.spyOn(documentApi, 'save').mockImplementation(() => new Promise((resolve) => { resolveSave = resolve }))
+    const store = useDocumentStore()
+    await store.load(firstId)
+    store.setTitle(firstId, 'Requested title')
+    const pending = store.save(firstId)
+    store.setTitle(firstId, 'Later edit')
+    resolveSave?.(documentFixture({ title: 'Requested title', revision: 1 }))
+    expect(await pending).toBe(true)
+    expect(store.sessionFor(firstId)?.title).toBe('Later edit')
+    expect(store.sessionFor(firstId)?.isDirty).toBe(true)
+    expect(store.sessionFor(firstId)?.revision).toBe(1)
+  })
+
   test('uses_only_the_approved_document_nodes_and_marks', () => {
     const editor = new Editor({ extensions: documentExtensions(), content: emptyContent })
     const nodeNames = Object.keys(editor.schema.nodes)
@@ -94,12 +214,12 @@ describe('document editor state', () => {
     const store = useDocumentStore()
 
     await store.load(firstId)
-    expect(store.savedWordCount).toBe(4)
-    store.setContent(emptyContent)
-    expect(store.counts.words).toBe(0)
-    expect(store.savedWordCount).toBe(4)
-    await store.save()
-    expect(store.savedWordCount).toBe(0)
+    expect(store.sessionFor(firstId)!.savedWordCount).toBe(4)
+    store.setContent(firstId, emptyContent)
+    expect(store.sessionFor(firstId)!.counts.words).toBe(0)
+    expect(store.sessionFor(firstId)!.savedWordCount).toBe(4)
+    await store.save(firstId)
+    expect(store.sessionFor(firstId)!.savedWordCount).toBe(0)
   })
 
   test('tracks_title_content_and_notes_and_saves_them_in_one_request', async () => {
@@ -116,14 +236,14 @@ describe('document editor state', () => {
     const store = useDocumentStore()
     await store.load(firstId)
 
-    store.setTitle('Opening')
-    store.setContent(proseContent)
-    store.setNotes('Keep this restrained.')
-    expect(store.isDirty).toBe(true)
-    expect(store.saveState).toBe('unsaved')
+    store.setTitle(firstId, 'Opening')
+    store.setContent(firstId, proseContent)
+    store.setNotes(firstId, 'Keep this restrained.')
+    expect(store.sessionFor(firstId)!.isDirty).toBe(true)
+    expect(store.sessionFor(firstId)!.saveState).toBe('unsaved')
 
-    const saving = store.save()
-    expect(store.saveState).toBe('saving')
+    const saving = store.save(firstId)
+    expect(store.sessionFor(firstId)!.saveState).toBe('saving')
     resolveSave?.(
       jsonResponse(
         documentFixture({
@@ -145,8 +265,8 @@ describe('document editor state', () => {
       notesText: 'Keep this restrained.',
       expectedRevision: 0,
     })
-    expect(store.isDirty).toBe(false)
-    expect(store.saveState).toBe('saved')
+    expect(store.sessionFor(firstId)!.isDirty).toBe(false)
+    expect(store.sessionFor(firstId)!.saveState).toBe('saved')
   })
 
   test('keeps_the_local_buffer_on_conflict_then_keep_mine_adopts_the_latest_revision', async () => {
@@ -179,25 +299,25 @@ describe('document editor state', () => {
     vi.stubGlobal('fetch', fetchMock)
     const store = useDocumentStore()
     await store.load(firstId)
-    store.setTitle('My local title')
-    store.setContent(proseContent)
-    store.setNotes('My local notes')
+    store.setTitle(firstId, 'My local title')
+    store.setContent(firstId, proseContent)
+    store.setNotes(firstId, 'My local notes')
 
-    await store.save()
-    expect(store.saveState).toBe('conflict')
-    expect(store.title).toBe('My local title')
-    expect(store.contentJson).toEqual(proseContent)
-    expect(store.notesText).toBe('My local notes')
+    await store.save(firstId)
+    expect(store.sessionFor(firstId)!.saveState).toBe('conflict')
+    expect(store.sessionFor(firstId)!.title).toBe('My local title')
+    expect(store.sessionFor(firstId)!.contentJson).toEqual(proseContent)
+    expect(store.sessionFor(firstId)!.notesText).toBe('My local notes')
 
-    await store.keepMine()
+    await store.keepMine(firstId)
     const putBodies = fetchMock.mock.calls
       .filter((call) => call[1]?.method === 'PUT')
       .map((call) => JSON.parse(String(call[1]?.body)) as { expectedRevision: number })
     expect(putBodies.map((body) => body.expectedRevision)).toEqual([0, 4])
-    expect(store.saveState).toBe('saved')
+    expect(store.sessionFor(firstId)!.saveState).toBe('saved')
   })
 
-  test('shows_failed_then_retries_and_can_cancel_loading_another_document', async () => {
+  test('loading_another_document_retains_a_failed_dirty_session_without_prompting', async () => {
     setActivePinia(createPinia())
     let failSave = true
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -210,19 +330,23 @@ describe('document editor state', () => {
     vi.stubGlobal('fetch', fetchMock)
     const store = useDocumentStore()
     await store.load(firstId)
-    store.setTitle('Changed')
-    await store.save()
-    expect(store.saveState).toBe('failed')
-    expect(store.errorMessage).toBe('Disk unavailable.')
+    store.setTitle(firstId, 'Changed')
+    await store.save(firstId)
+    expect(store.sessionFor(firstId)!.saveState).toBe('failed')
+    expect(store.sessionFor(firstId)!.errorMessage).toBe('Disk unavailable.')
 
-    expect(await store.load(secondId, () => false)).toBe(false)
-    expect(store.documentId).toBe(firstId)
+    const confirm = vi.spyOn(window, 'confirm')
+    expect(await store.load(secondId)).toBe(true)
+    expect(confirm).not.toHaveBeenCalled()
+    expect(store.sessionFor(firstId)!.documentId).toBe(firstId)
+    expect(store.sessionFor(firstId)!.isDirty).toBe(true)
+    expect(store.sessionFor(secondId)!.isDirty).toBe(false)
     failSave = false
-    await store.save()
-    expect(store.saveState).toBe('saved')
+    await store.save(firstId)
+    expect(store.sessionFor(firstId)!.saveState).toBe('saved')
   })
 
-  test('ignores_a_save_response_after_another_document_has_loaded', async () => {
+  test('applies_a_late_save_response_only_to_its_matching_session', async () => {
     setActivePinia(createPinia())
     let resolveSave: ((document: DocumentDto) => void) | undefined
     vi.spyOn(snapshotApi, 'list').mockResolvedValue([])
@@ -233,16 +357,17 @@ describe('document editor state', () => {
     const store = useDocumentStore()
 
     await store.load(firstId)
-    store.setTitle('Delayed title')
-    const saving = store.save()
-    await store.load(secondId, () => true)
+    store.setTitle(firstId, 'Delayed title')
+    const saving = store.save(firstId)
+    await store.load(secondId)
     resolveSave?.(documentFixture({ id: firstId, title: 'Delayed title', revision: 1 }))
     await saving
 
-    expect(store.documentId).toBe(secondId)
-    expect(store.title).toBe('Second')
-    expect(store.revision).toBe(7)
-    expect(store.saveState).toBe('saved')
+    expect(store.sessionFor(firstId)!.title).toBe('Delayed title')
+    expect(store.sessionFor(firstId)!.revision).toBe(1)
+    expect(store.sessionFor(firstId)!.saveState).toBe('saved')
+    expect(store.sessionFor(secondId)!.title).toBe('Second')
+    expect(store.sessionFor(secondId)!.revision).toBe(7)
   })
 
   test('ignores_a_late_snapshot_list_from_the_previous_document', async () => {
@@ -259,12 +384,12 @@ describe('document editor state', () => {
 
     await store.load(firstId)
     await store.load(secondId)
-    await vi.waitFor(() => expect(store.snapshots.map((snapshot) => snapshot.name)).toEqual(['Second snapshot']))
+    await vi.waitFor(() => expect(store.sessionFor(secondId)!.snapshots.map((snapshot) => snapshot.name)).toEqual(['Second snapshot']))
     resolveFirst?.([{ id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', documentId: firstId, name: 'First snapshot', contentJson: emptyContent, contentText: '', createdAt: '2026-10-10T00:00:00.000Z' }])
     await flushPromises()
 
-    expect(store.documentId).toBe(secondId)
-    expect(store.snapshots.map((snapshot) => snapshot.name)).toEqual(['Second snapshot'])
+    expect(store.sessionFor(firstId)!.snapshots.map((snapshot) => snapshot.name)).toEqual(['First snapshot'])
+    expect(store.sessionFor(secondId)!.snapshots.map((snapshot) => snapshot.name)).toEqual(['Second snapshot'])
   })
 
   test('renders_the_formatting_controls_and_emits_the_explicit_save_shortcut', async () => {
