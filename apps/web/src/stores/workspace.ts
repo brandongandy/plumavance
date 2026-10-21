@@ -261,17 +261,32 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  async function createItem(kind: BinderItemKind, parentId: string | null): Promise<void> {
+  async function createItem(kind: BinderItemKind, parentId: string | null): Promise<string | undefined> {
+    const creatingProjectId = projectId.value
+    const selectedId = activeItemId.value
+    const replacementId = activeTabId.value
+    const documents = useDocumentStore()
+    const replacementSession = replacementId ? documents.sessionFor(replacementId) : undefined
+    const buffer = (): string => JSON.stringify(replacementSession
+      ? [replacementSession.title, replacementSession.contentJson, replacementSession.notesText] : null)
+    const approvedBuffer = buffer()
     const title = kind === 'folder' ? 'Untitled Folder' : 'Untitled Document'
-    const created = await binderApi.create(projectId.value, { kind, parentId, title })
+    const created = await binderApi.create(creatingProjectId, { kind, parentId, title })
+    if (projectId.value !== creatingProjectId) return
+    const canReplace = activeItemId.value === selectedId && activeTabId.value === replacementId
+      && (!replacementId || documents.sessionFor(replacementId) === replacementSession)
+      && buffer() === approvedBuffer
     items.value = applyMove([...items.value, created], {
       itemId: created.id,
       parentId: created.parentId,
       index: created.position,
     })
-    if (created.kind === 'document') replaceActiveDocument(created.id)
-    else activeItemId.value = created.id
+    if (created.kind === 'document') {
+      if (canReplace) replaceActiveDocument(created.id)
+      else openDocumentIds.value = [...openDocumentIds.value, created.id]
+    } else if (canReplace) activeItemId.value = created.id
     await useWritingProgressStore().refresh()
+    return created.id
   }
 
   async function renameItem(id: string, title: string): Promise<void> {

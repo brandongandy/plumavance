@@ -2,12 +2,13 @@ import axeCore from 'axe-core'
 import PrimeVue from 'primevue/config'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { nextTick } from 'vue'
+import { nextTick, watch } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 import { binderApi } from '../src/api/binder.js'
 import { documentApi } from '../src/api/documents.js'
+import { snapshotApi } from '../src/api/snapshots.js'
 import WorkspaceView from '../src/views/WorkspaceView.vue'
 import DocumentEditor from '../src/features/editor/DocumentEditor.vue'
 import { useDocumentStore } from '../src/stores/document.js'
@@ -361,6 +362,120 @@ describe('workspace layout', () => {
     expect(wrapper.get(`[data-tab-id="${chapterId}"]`).text()).toContain('Chapter One')
     expect(useDocumentStore().sessionFor(researchDocumentId)?.isDirty).toBe(false)
     expect(useWorkspaceStore().activeTabId).toBe(chapterId)
+  })
+
+  test.each(['focus', 'edit', 'close'] as const)('delayed_create_preserves_%s_changes_after_the_discard_check', async (transition) => {
+    // Catches a delayed create discarding a different tab or edits made after the original guard.
+    const wrapper = await mountWorkspaceWithTwoDocuments()
+    const workspace = useWorkspaceStore()
+    const documents = useDocumentStore()
+    await wrapper.get('[aria-label="Open Research Notes in new tab"]').trigger('click')
+    await flushPromises()
+    documents.setNotes(researchDocumentId, 'Keep these research notes')
+    await wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-title`).trigger('click')
+    let finish!: () => void
+    vi.spyOn(binderApi, 'create').mockImplementation(() => new Promise((resolve) => {
+      finish = () => resolve({ ...workspace.items[1]!, id: nextDocumentId, title: 'Untitled Document', position: 2 })
+    }))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
+    await wrapper.get('[aria-label="New document"]').trigger('click')
+    if (transition === 'focus') await wrapper.get(`[data-tab-id="${researchDocumentId}"] .editor-tab-title`).trigger('click')
+    else if (transition === 'close') await wrapper.get(`[data-tab-id="${chapterId}"] .editor-tab-close`).trigger('click')
+    else await wrapper.get('[aria-label="Document title"]').setValue('Written during creation')
+    const focusedId = workspace.activeTabId
+    finish()
+    await flushPromises()
+    expect(documents.sessionFor(researchDocumentId)?.notesText).toBe('Keep these research notes')
+    expect(workspace.activeTabId).toBe(focusedId)
+    expect(workspace.activeItemId).toBe(focusedId)
+    expect(workspace.items.some((item) => item.id === nextDocumentId)).toBe(true)
+    expect(wrapper.find('input[aria-label^="Rename "]').exists()).toBe(false)
+    if (transition === 'edit') expect(documents.sessionFor(chapterId)?.title).toBe('Written during creation')
+    expect(confirm).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    ['editor', 'folder'], ['snapshot', 'folder'], ['editor', 'discard'], ['snapshot', 'discard'],
+  ] as const)('delayed_%s_save_completion_survives_%s_without_wrong_or_duplicate_title_updates', async (source, transition) => {
+    // Catches title completion owned by unmounted presentation and stale completions applied to reopened IDs.
+    const wrapper = await splitWorkspace()
+    const workspace = useWorkspaceStore()
+    const documents = useDocumentStore()
+    let finish!: () => void
+    vi.spyOn(documentApi, 'save').mockImplementation((id, payload) => new Promise((resolve) => {
+      finish = () => resolve({ id, projectId, ...payload, contentText: 'Research prose', revision: 1, savedAt: '2026-10-21T00:00:00.000Z' })
+    }))
+    const createSnapshot = vi.spyOn(snapshotApi, 'create').mockResolvedValue({
+      id: nextDocumentId, documentId: researchDocumentId, name: 'Milestone', wordCount: 2, createdAt: '2026-10-21T00:00:00.000Z',
+    })
+    const updates: string[] = []
+    const stop = watch(() => workspace.items, (items) => {
+      const title = items.find((item) => item.id === researchDocumentId)?.title
+      if (title) updates.push(title)
+    }, { flush: 'sync' })
+    await wrapper.get(`[data-document-pane="${researchDocumentId}"] [aria-label="Document title"]`).setValue('Saved during suspension')
+    if (source === 'editor') {
+      await wrapper.get(`[data-document-pane="${researchDocumentId}"] [data-document-editor]`).trigger('keydown', { key: 's', ctrlKey: true })
+    } else {
+      await wrapper.get('#snapshots-tab').trigger('click')
+      await wrapper.get('[aria-label="Take snapshot"]').trigger('click')
+      await flushPromises()
+      document.querySelector<HTMLButtonElement>('[aria-label="Save and take snapshot"]')!.click()
+      await flushPromises()
+    }
+    if (transition === 'folder') await wrapper.get(`[data-item-id="${folderId}"]`).trigger('click')
+    else {
+      vi.spyOn(window, 'confirm').mockReturnValue(true)
+      await wrapper.get(`[data-tab-id="${researchDocumentId}"] .editor-tab-close`).trigger('click')
+      await wrapper.get('[aria-label="Open Research Notes in new tab"]').trigger('click')
+      await flushPromises()
+    }
+    finish()
+    await flushPromises()
+    expect(workspace.items.find((item) => item.id === chapterId)?.title).toBe('Chapter One')
+    if (transition === 'folder') {
+      expect(workspace.activeItemId).toBe(folderId)
+      expect(updates).toEqual(['Saved during suspension'])
+      expect(documents.sessionFor(researchDocumentId)?.isDirty).toBe(false)
+      if (source === 'snapshot') expect(createSnapshot).toHaveBeenCalledOnce()
+    } else {
+      expect(updates).toEqual([])
+      expect(documents.sessionFor(researchDocumentId)?.title).toBe('Research Notes')
+      expect(createSnapshot).not.toHaveBeenCalled()
+    }
+    stop()
+  })
+
+  test('conflict_reload_refreshes_the_project_aggregate_for_the_new_server_body_once', async () => {
+    // Catches reload replacing the document baseline while leaving the saved project total stale.
+    let aggregate = 100
+    let progressReads = 0
+    const wrapper = await mountWorkspace(1280, (url, init) => {
+      if (url.pathname.endsWith('/writing-progress')) {
+        progressReads += 1
+        return Response.json({ projectWordTarget: null, dailyWordTarget: null, dailyCountMode: 'additions', projectWordCount: aggregate, dailyWordCount: 10, localDate: url.searchParams.get('localDate') })
+      }
+      if (init?.method === 'PUT') return Response.json({ code: 'DOCUMENT_CONFLICT', message: 'Changed elsewhere', details: { currentRevision: 2, savedAt: '2026-10-21T00:00:00.000Z' } }, { status: 409 })
+      if (aggregate !== 100 && url.pathname === `/api/documents/${chapterId}`) return Response.json({
+        id: chapterId, projectId, title: 'Server chapter', notesText: '', revision: 2, savedAt: '2026-10-21T00:00:00.000Z',
+        contentText: 'A longer server chapter body', contentJson: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'A longer server chapter body' }] }] },
+      })
+      return workspaceResponse(url)
+    })
+    await wrapper.get('[aria-label="Document title"]').setValue('Local title')
+    await wrapper.get('[aria-label="Save document"]').trigger('click')
+    await flushPromises()
+    expect(useDocumentStore().sessionFor(chapterId)?.saveState).toBe('conflict')
+    const before = progressReads
+    aggregate = 103
+    const reload = wrapper.findAll('button').find((button) => button.text() === 'Reload server copy')!
+    await reload.trigger('click')
+    await flushPromises()
+    expect(useDocumentStore().sessionFor(chapterId)?.counts.words).toBe(5)
+    expect(useWritingProgressStore().projectWordCount).toBe(103)
+    expect(progressReads).toBe(before + 1)
+    expect(useWritingProgressStore().dailyWordCount).toBe(10)
+    expect(wrapper.get(`[data-tab-id="${chapterId}"]`).text()).toContain('Server chapter')
   })
 
   test('replaces_the_active_tab_on_a_normal_binder_document_click', async () => {

@@ -12,7 +12,6 @@ import SnapshotPreviewDialog from './SnapshotPreviewDialog.vue'
 import TakeSnapshotDialog from './TakeSnapshotDialog.vue'
 
 const props = defineProps<{ documentId: string }>()
-const emit = defineEmits<{ saved: [id: string, title: string] }>()
 const store = useDocumentStore()
 const session = computed(() => store.sessionFor(props.documentId))
 provideTooltipGroup()
@@ -84,11 +83,7 @@ async function openDetail(
 async function take(name: string, saveFirst: boolean): Promise<void> {
   const id = props.documentId
   const sequence = detailSequence
-  if (saveFirst) {
-    if (!(await store.save(id))) return
-    const saved = store.sessionFor(id)
-    if (saved) emit('saved', id, saved.title)
-  }
+  if (saveFirst && !(await store.save(id))) return
   const taken = await store.takeSnapshot(id, name)
   if (taken && sequence === detailSequence) await closeAll()
 }
