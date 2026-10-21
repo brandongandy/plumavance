@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import type { EditorDocument } from '@pluma/shared'
 import { EditorContent, useEditor } from '@tiptap/vue-3'
-import { onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useTypewriterScroll } from '../focus/useTypewriterScroll.js'
 import { countText, editorText } from './counts.js'
 import { documentExtensions } from './documentExtensions.js'
 import EditorToolbar from './EditorToolbar.vue'
 
-const props = defineProps<{ modelValue: EditorDocument; readonly?: boolean; focusMode?: boolean }>()
+const props = withDefaults(defineProps<{
+  modelValue: EditorDocument
+  readonly?: boolean
+  focusMode?: boolean
+  ariaLabel?: string
+  scrollTop?: number
+}>(), { ariaLabel: 'Document editor', scrollTop: 0 })
 const emit = defineEmits<{
   'update:modelValue': [value: EditorDocument]
+  'update:scrollTop': [value: number]
   'word-count-delta': [signedDelta: number]
   save: []
 }>()
@@ -21,7 +28,7 @@ const editor = useEditor({
   extensions: documentExtensions(),
   editorProps: {
     attributes: {
-      'aria-label': 'Document editor',
+      'aria-label': props.ariaLabel,
       'aria-multiline': 'true',
       class: 'document-prose',
     },
@@ -53,6 +60,24 @@ watch(
   (readonly) => editor.value?.setEditable(!readonly),
 )
 
+watch(() => props.ariaLabel, (label) => {
+  editor.value?.setOptions({
+    editorProps: { attributes: { 'aria-label': label, 'aria-multiline': 'true', class: 'document-prose' } },
+  })
+})
+
+function restoreScroll(): void {
+  if (scrollContainer.value) scrollContainer.value.scrollTop = props.scrollTop
+}
+
+onMounted(async () => {
+  await nextTick()
+  // EditorContent transfers the editable DOM on its own next tick after mounting.
+  await nextTick()
+  restoreScroll()
+})
+watch(() => props.scrollTop, restoreScroll, { flush: 'post' })
+
 function handleKeydown(event: KeyboardEvent): void {
   if (
     event.defaultPrevented
@@ -80,7 +105,13 @@ onBeforeUnmount(() => editor.value?.destroy())
 <template>
   <div data-document-editor class="document-editor" @keydown="handleKeydown" @keyup="handleKeyup">
     <EditorToolbar :editor="editor ?? null" />
-    <div ref="scrollContainer" class="document-scroll" @wheel.passive="typewriter.noteManualScroll" @pointerdown="typewriter.noteManualScroll">
+    <div
+      ref="scrollContainer"
+      class="document-scroll"
+      @scroll.passive="emit('update:scrollTop', ($event.target as HTMLElement).scrollTop)"
+      @wheel.passive="typewriter.noteManualScroll"
+      @pointerdown="typewriter.noteManualScroll"
+    >
       <EditorContent v-if="editor" :editor="editor!" />
     </div>
   </div>
