@@ -1052,6 +1052,63 @@ button {
 
 .compile-dialog {
   width: min(760px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: var(--color-chrome);
+  color: var(--color-text);
+  box-shadow: 0 14px 38px color-mix(in srgb, var(--color-text) 18%, transparent);
+}
+
+.compile-dialog .p-dialog-header {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-chrome);
+  padding: 10px 12px;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.compile-dialog .p-dialog-content {
+  background: var(--color-chrome);
+  padding: 12px;
+  color: var(--color-text);
+}
+
+.compile-dialog .p-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-chrome);
+  padding: 8px 12px;
+}
+
+.compile-dialog .p-dialog-footer button {
+  min-height: 32px;
+  padding: 0 12px;
+  color: var(--color-text-soft);
+  font-size: 12px;
+}
+
+.compile-dialog .p-dialog-footer button:not(.p-button-text) {
+  background: var(--color-focus);
+  color: var(--color-app);
+  font-weight: 600;
+}
+
+.compile-dialog .p-dialog-footer button:disabled {
+  opacity: 0.45;
+}
+
+.compile-dialog .p-dialog-close-button {
+  width: 32px;
+  height: 32px;
+  color: var(--color-muted);
+}
+
+.compile-dialog-mask {
+  --p-mask-background: color-mix(in srgb, var(--color-app) 80%, transparent);
 }
 
 .compile-grid {
@@ -1059,6 +1116,8 @@ button {
   min-height: 220px;
   grid-template-columns: 1fr 1fr;
   border: 1px solid var(--color-border);
+  background: var(--color-app);
+  color: var(--color-text-soft);
 }
 
 .compile-selection,
@@ -1075,6 +1134,7 @@ button {
 
 .compile-selection-toggle {
   margin: 0 8px 6px;
+  color: var(--color-focus);
 }
 
 .compile-selection legend,
@@ -1134,7 +1194,14 @@ button {
   display: grid;
   gap: 8px;
   margin-top: 12px;
+  color: var(--color-text-soft);
   font-size: 12px;
+}
+
+.compile-options input[type='checkbox'],
+.compile-options input[type='radio'],
+.compile-selection input[type='checkbox'] {
+  accent-color: var(--color-focus);
 }
 
 .compile-options fieldset {
@@ -1149,6 +1216,25 @@ button {
 .compile-options legend {
   margin-bottom: 5px;
   color: var(--color-muted);
+}
+
+.compile-options .dialog-field {
+  color: var(--color-text-soft);
+}
+
+.compile-options .dialog-field input {
+  height: 30px;
+  border: 1px solid var(--color-border);
+  border-radius: 2px;
+  background: var(--color-app);
+  padding: 0 7px;
+  color: var(--color-text);
+  font-size: 12px;
+}
+
+.compile-options .dialog-field input:focus {
+  border-color: var(--color-focus);
+  box-shadow: none;
 }
 
 .paperback-size-field {

@@ -228,8 +228,16 @@ async function closeSnapshotPane(restoreFocus = true): Promise<void> {
     trigger.focus({ preventScroll: true })
     return
   }
+  if (focusMode.isActive.value) {
+    // EditorContent transfers the editable DOM after the document pane remounts.
+    await nextTick()
+    await nextTick()
+  }
+  const focusTarget = focusMode.isActive.value
+    ? '.editor-document-pane.is-focused [contenteditable="true"]'
+    : `[data-tab-id="${store.activeTabId}"] .editor-tab-title`
   workspaceRoot.value
-    ?.querySelector<HTMLElement>(`[data-tab-id="${store.activeTabId}"] .editor-tab-title`)
+    ?.querySelector<HTMLElement>(focusTarget)
     ?.focus({ preventScroll: true })
 }
 
@@ -320,7 +328,7 @@ onBeforeUnmount(() => {
       <template #editor>
         <main id="main-content" class="workspace-main">
           <EditorTabs
-            v-if="store.openDocuments.length"
+            v-if="store.openDocuments.length && !focusMode.isActive.value"
             :tabs="store.openDocuments"
             :active-id="store.activeItem?.kind === 'document' ? store.activeTabId : null"
             :split-ids="displayedSplitIds"
