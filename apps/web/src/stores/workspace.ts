@@ -1,6 +1,6 @@
 import type { BinderItemDto, BinderItemKind, ProjectDto, SearchResultDto } from '@pluma/shared'
 import { defineStore } from 'pinia'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, shallowRef, watch } from 'vue'
 
 import { binderApi, type MoveItemInput } from '../api/binder.js'
 import { documentApi } from '../api/documents.js'
@@ -9,12 +9,14 @@ import { useDocumentStore } from './document.js'
 import { useWritingProgressStore } from './writing-progress.js'
 
 export type WorkspacePanel = 'binder' | 'editor' | 'inspector'
+export type SplitOrientation = 'vertical' | 'horizontal'
 
 interface WorkspacePreferences {
   binderWidth: number
   inspectorWidth: number
   binderOpen: boolean
   inspectorOpen: boolean
+  splitRatios: Record<SplitOrientation, number>
 }
 
 const preferenceKey = 'pluma.workspace.preferences'
@@ -23,6 +25,12 @@ const defaults: WorkspacePreferences = {
   inspectorWidth: 280,
   binderOpen: true,
   inspectorOpen: true,
+  splitRatios: { vertical: 0.5, horizontal: 0.5 },
+}
+
+function normalizeSplitRatio(ratio: unknown): number {
+  return typeof ratio === 'number' && Number.isFinite(ratio)
+    ? Math.min(0.8, Math.max(0.2, ratio)) : 0.5
 }
 
 function loadPreferences(): WorkspacePreferences {
@@ -33,6 +41,10 @@ function loadPreferences(): WorkspacePreferences {
       inspectorWidth: Math.min(420, Math.max(220, value.inspectorWidth ?? defaults.inspectorWidth)),
       binderOpen: value.binderOpen ?? true,
       inspectorOpen: value.inspectorOpen ?? true,
+      splitRatios: {
+        vertical: normalizeSplitRatio(value.splitRatios?.vertical),
+        horizontal: normalizeSplitRatio(value.splitRatios?.horizontal),
+      },
     }
   } catch {
     return { ...defaults }
@@ -53,6 +65,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const activeItemId = ref<string | null>(null)
   const openDocumentIds = ref<string[]>([])
   const activeTabId = ref<string | null>(null)
+  const splitOrientation = shallowRef<SplitOrientation | null>(null)
+  const splitDocumentIds = ref<[] | [string, string]>([])
+  const recentDocumentIds = ref<string[]>([])
+  const splitRatios = ref({ ...preferences.splitRatios })
   const binderOpen = ref(preferences.binderOpen)
   const inspectorOpen = ref(preferences.inspectorOpen)
   const binderWidth = ref(preferences.binderWidth)
@@ -64,6 +80,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   let loadSequence = 0
 
   const activeItem = computed(() => items.value.find((item) => item.id === activeItemId.value) ?? null)
+  const isSplit = computed(() => splitOrientation.value !== null && splitDocumentIds.value.length === 2)
+  const renderedDocumentIds = computed(() => {
+    if (activeItem.value?.kind !== 'document') return []
+    return isSplit.value ? [...splitDocumentIds.value] : activeTabId.value ? [activeTabId.value] : []
+  })
   const openDocuments = computed(() => openDocumentIds.value.flatMap((id) => {
     const item = items.value.find((candidate) => candidate.id === id && candidate.kind === 'document')
     return item ? [{ id: item.id, title: item.title }] : []
@@ -73,11 +94,63 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     return items.value.some((item) => item.id === id && item.kind === 'document')
   }
 
+  function rememberDocument(id: string): void {
+    recentDocumentIds.value = [id, ...recentDocumentIds.value.filter((documentId) => documentId !== id)]
+  }
+
   function activateTab(id: string): void {
     if (!openDocumentIds.value.includes(id) || !isDocument(id)) return
+    if (isSplit.value && !splitDocumentIds.value.some((documentId) => documentId === id)) {
+      const [first, second] = splitDocumentIds.value as [string, string]
+      splitDocumentIds.value = activeTabId.value === second ? [first, id] : [id, second]
+    }
     activeTabId.value = id
     activeItemId.value = id
     activePanel.value = 'editor'
+    rememberDocument(id)
+  }
+
+  function enterSplit(orientation: SplitOrientation): void {
+    if (isSplit.value) {
+      splitOrientation.value = orientation
+      return
+    }
+    const focusedId = activeTabId.value
+    if (!focusedId || !isDocument(focusedId) || !openDocumentIds.value.includes(focusedId)) return
+    const candidates = openDocumentIds.value.filter((id) => id !== focusedId && isDocument(id))
+    const index = openDocumentIds.value.indexOf(focusedId)
+    const otherId = recentDocumentIds.value.find((id) => candidates.includes(id))
+      ?? openDocumentIds.value.slice(index + 1).find((id) => candidates.includes(id))
+      ?? openDocumentIds.value.slice(0, index).reverse().find((id) => candidates.includes(id))
+    if (!otherId) return
+    splitDocumentIds.value = [focusedId, otherId]
+    splitOrientation.value = orientation
+  }
+
+  function exitSplit(): void {
+    splitDocumentIds.value = []
+    splitOrientation.value = null
+  }
+
+  function setSplitRatio(orientation: SplitOrientation, ratio: number): void {
+    splitRatios.value = { ...splitRatios.value, [orientation]: normalizeSplitRatio(ratio) }
+  }
+
+  // Callers confirm dirty sessions before invoking actions that remove tabs.
+  function removeDocumentTabs(ids: readonly string[]): void {
+    const removed = new Set(ids)
+    const activeIndex = activeTabId.value ? openDocumentIds.value.indexOf(activeTabId.value) : -1
+    const splitRemoved = splitDocumentIds.value.some((id) => removed.has(id))
+    const survivor = splitDocumentIds.value.find((id) => !removed.has(id))
+    openDocumentIds.value = openDocumentIds.value.filter((id) => !removed.has(id))
+    recentDocumentIds.value = recentDocumentIds.value.filter((id) => !removed.has(id))
+    for (const id of removed) useDocumentStore().discard(id)
+    if (splitRemoved) exitSplit()
+    if (splitRemoved || (activeTabId.value && removed.has(activeTabId.value))) {
+      activeTabId.value = survivor ?? openDocumentIds.value[Math.min(Math.max(activeIndex, 0), openDocumentIds.value.length - 1)] ?? null
+      if (splitRemoved || (activeItemId.value && removed.has(activeItemId.value))) activeItemId.value = activeTabId.value
+      if (activeTabId.value) rememberDocument(activeTabId.value)
+    }
   }
 
   function replaceActiveDocument(id: string): void {
@@ -87,6 +160,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       return
     }
     const index = activeTabId.value ? openDocumentIds.value.indexOf(activeTabId.value) : -1
+    const previousId = activeTabId.value
     if (index >= 0) {
       openDocumentIds.value = openDocumentIds.value.map((documentId, candidateIndex) =>
         candidateIndex === index ? id : documentId,
@@ -94,9 +168,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     } else {
       openDocumentIds.value = [...openDocumentIds.value, id]
     }
-    activeTabId.value = id
-    activeItemId.value = id
-    activePanel.value = 'editor'
+    activateTab(id)
+    if (index >= 0 && previousId) {
+      recentDocumentIds.value = recentDocumentIds.value.filter((documentId) => documentId !== previousId)
+      useDocumentStore().discard(previousId)
+    }
   }
 
   function openDocumentInNewTab(id: string): void {
@@ -106,26 +182,18 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   function closeDocumentTab(id: string): void {
-    const index = openDocumentIds.value.indexOf(id)
-    if (index < 0) return
-    const wasActive = activeTabId.value === id
-    openDocumentIds.value = openDocumentIds.value.filter((documentId) => documentId !== id)
-    if (!wasActive) return
-    const nextId = openDocumentIds.value[Math.min(index, openDocumentIds.value.length - 1)] ?? null
-    activeTabId.value = nextId
-    if (activeItemId.value === id) activeItemId.value = nextId
+    if (openDocumentIds.value.includes(id)) removeDocumentTabs([id])
   }
 
   function closeOtherDocumentTabs(id: string): void {
     if (!openDocumentIds.value.includes(id)) return
-    openDocumentIds.value = [id]
-    activeTabId.value = id
-    activeItemId.value = id
-    activePanel.value = 'editor'
+    removeDocumentTabs(openDocumentIds.value.filter((documentId) => documentId !== id))
+    exitSplit()
+    activateTab(id)
   }
 
   watch(
-    [binderOpen, inspectorOpen, binderWidth, inspectorWidth],
+    [binderOpen, inspectorOpen, binderWidth, inspectorWidth, splitRatios],
     () => {
       localStorage.setItem(
         preferenceKey,
@@ -134,6 +202,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
           inspectorOpen: inspectorOpen.value,
           binderWidth: binderWidth.value,
           inspectorWidth: inspectorWidth.value,
+          splitRatios: splitRatios.value,
         }),
       )
     },
@@ -153,6 +222,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       activeItemId.value = null
       openDocumentIds.value = []
       activeTabId.value = null
+      exitSplit()
+      recentDocumentIds.value = []
       useDocumentStore().clear()
     }
     projectId.value = id
@@ -171,7 +242,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       items.value = detail.items
       trashedItems.value = detail.trashedItems
       const availableDocumentIds = new Set(detail.items.filter((item) => item.kind === 'document').map((item) => item.id))
-      openDocumentIds.value = openDocumentIds.value.filter((documentId) => availableDocumentIds.has(documentId))
+      removeDocumentTabs(openDocumentIds.value.filter((documentId) => !availableDocumentIds.has(documentId)))
       const firstDocumentId = detail.items.find((item) => item.kind === 'document')?.id ?? null
       if (initializeTabs) {
         openDocumentIds.value = firstDocumentId ? [firstDocumentId] : []
@@ -215,9 +286,9 @@ export const useWorkspaceStore = defineStore('workspace', () => {
 
     const documents = useDocumentStore()
     let saved = false
-    if (documents.documentId === id) {
-      documents.setTitle(trimmed)
-      saved = await documents.save()
+    if (documents.sessionFor(id)) {
+      documents.setTitle(id, trimmed)
+      saved = await documents.save(id)
     } else {
       const current = await documentApi.get(id)
       await documentApi.save(id, {
@@ -248,8 +319,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
-  async function trashItem(id: string): Promise<void> {
-    const trashed = await binderApi.trash(id)
+  function itemIdsInSubtree(id: string): Set<string> {
     const descendantIds = new Set<string>([id])
     let changed = true
     while (changed) {
@@ -261,13 +331,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
         }
       }
     }
-    const activeIndex = activeTabId.value ? openDocumentIds.value.indexOf(activeTabId.value) : -1
-    const activeTabRemoved = activeTabId.value ? descendantIds.has(activeTabId.value) : false
+    return descendantIds
+  }
+
+  function documentIdsInSubtree(id: string): string[] {
+    const descendants = itemIdsInSubtree(id)
+    return items.value.filter((item) => item.kind === 'document' && descendants.has(item.id)).map((item) => item.id)
+  }
+
+  async function trashItem(id: string): Promise<void> {
+    const trashed = await binderApi.trash(id)
+    const descendantIds = itemIdsInSubtree(id)
     const activeItemRemoved = descendantIds.has(activeItemId.value ?? '')
-    openDocumentIds.value = openDocumentIds.value.filter((documentId) => !descendantIds.has(documentId))
-    if (activeTabRemoved) {
-      activeTabId.value = openDocumentIds.value[Math.min(activeIndex, openDocumentIds.value.length - 1)] ?? null
-    }
+    removeDocumentTabs(documentIdsInSubtree(id))
     items.value = items.value.filter((item) => !descendantIds.has(item.id))
     trashedItems.value = [trashed, ...trashedItems.value]
     if (activeItemRemoved) activeItemId.value = activeTabId.value ?? items.value[0]?.id ?? null
@@ -327,6 +403,12 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     openDocumentIds,
     openDocuments,
     activeTabId,
+    splitOrientation,
+    splitDocumentIds,
+    recentDocumentIds,
+    splitRatios,
+    renderedDocumentIds,
+    isSplit,
     binderOpen,
     inspectorOpen,
     binderWidth,
@@ -347,6 +429,10 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     openDocumentInNewTab,
     closeDocumentTab,
     closeOtherDocumentTabs,
+    enterSplit,
+    exitSplit,
+    setSplitRatio,
+    documentIdsInSubtree,
     setBinderWidth,
     setInspectorWidth,
   }
