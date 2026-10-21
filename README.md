@@ -10,7 +10,17 @@
 
 # Plumavance
 
-Plumavance is a private, self-hosted writing workspace inspired by Scrivener. It combines multiple projects, a hierarchical binder, rich-text documents, notes, manual snapshots, PDF/RTF/Markdown export, and a fullscreen typewriter mode in a compact three-pane interface.
+Plumavance is a private, self-hosted writing workspace inspired by Scrivener.
+
+Features include:
+
+- Multiple projects
+- A project binder with chapters/documents
+- Private document notes, and snapshots to version documents
+- PDF, RTF, Markdown, and epub export
+- A fullscreen typewriter mode
+
+Plumavance is currently in **early beta**. While breaking changes are not anticipated, frequent backups are recommended.
 
 # Screenshots
 
