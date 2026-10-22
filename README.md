@@ -24,14 +24,14 @@ Plumavance is currently in **early beta**. While breaking changes are not antici
 
 # Screenshots
 
-On the homepage you view and manage your various projects.
+Manage writing projects from the project library.
 
 <p align="center">
    <img src="assets/images/app-01.png"
         alt="Plumavance homepage" />
 </p>
 
-In main view, you manage chapter folders, scenes, notes, snapshots, and sometimes, write.
+Organize chapters and scenes in the binder, write in the editor, and keep private notes in the inspector.
 
 <p align="center">
    <img src="assets/images/app-02.png"
@@ -43,6 +43,27 @@ Focus mode stays centered on the active line.
 <p align="center">
    <img src="assets/images/app-03.png"
         alt="Plumavance focus view" />
+</p>
+
+Open two scenes side by side while revising or working from reference material.
+
+<p align="center">
+   <img src="assets/images/app-04.png"
+        alt="Plumavance split editor" />
+</p>
+
+Compare a snapshot with the current draft before restoring an earlier version.
+
+<p align="center">
+   <img src="assets/images/app-05.png"
+        alt="Plumavance snapshot comparison" />
+</p>
+
+Choose the binder contents and output settings for manuscript and e-reader exports.
+
+<p align="center">
+   <img src="assets/images/app-06.png"
+        alt="Plumavance compile dialog" />
 </p>
 
 # Setup and Development
