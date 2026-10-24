@@ -799,6 +799,10 @@ button {
   overflow-x: auto;
 }
 
+.editor-redo-icon {
+  transform: scaleX(-1);
+}
+
 .editor-toolbar button[aria-pressed='true'] {
   background: color-mix(in srgb, var(--color-focus) 24%, transparent);
   color: var(--color-text);

@@ -16,11 +16,11 @@ test('creates_a_project_writes_notes_and_saves_explicitly', async ({ page }) => 
   await expect(page.getByLabel('Document notes')).toHaveValue('Keep the opening quiet.')
 })
 
-test('renders_the_list_and_block_quote_toolbar_icons', async ({ page }) => {
+test('renders_the_editor_toolbar_icons', async ({ page }) => {
   await createProject(page, 'Formatting Journey')
   await createDocument(page)
 
-  for (const label of ['Indent', 'Outdent', 'Block quote']) {
+  for (const label of ['Redo', 'Indent', 'Outdent', 'Block quote']) {
     const icon = page.getByRole('button', { name: label }).locator('.pi')
     await expect(icon).toBeVisible()
     const iconStyle = await icon.evaluate((element) => {

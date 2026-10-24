@@ -14,14 +14,6 @@ provideTooltipGroup()
 
 <template>
   <div v-if="editor" role="toolbar" aria-label="Document toolbar" class="editor-toolbar">
-    <SaveStatus
-      :state="saveState"
-      :message="saveMessage"
-      @save="emit('save')"
-      @reload="emit('reload')"
-      @keep-mine="emit('keepMine')"
-    />
-    <span aria-hidden="true" class="editor-toolbar-divider" />
     <div class="editor-formatting-controls">
       <TooltipButton
         icon="pi pi-undo"
@@ -32,7 +24,7 @@ provideTooltipGroup()
         @click="editor.chain().focus().undo().run()"
       />
       <TooltipButton
-        icon="pi pi-redo"
+        icon="pi pi-undo editor-redo-icon"
         aria-label="Redo"
         :tooltip="`Redo (${shortcutLabel('Mod+Shift+Z', 'Mod+Y')})`"
         :disabled="!editor.can().chain().focus().redo().run()"
@@ -137,5 +129,13 @@ provideTooltipGroup()
         @click="editor.chain().focus().setHorizontalRule().run()"
       />
     </div>
+    <span aria-hidden="true" class="editor-toolbar-divider" />
+    <SaveStatus
+      :state="saveState"
+      :message="saveMessage"
+      @save="emit('save')"
+      @reload="emit('reload')"
+      @keep-mine="emit('keepMine')"
+    />
   </div>
 </template>
