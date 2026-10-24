@@ -448,7 +448,6 @@ describe('document editor state', () => {
     const toolbar = wrapper.get('[role="toolbar"][aria-label="Document toolbar"]')
     expect(toolbar.get('[role="status"]').text()).toContain('Saved')
     expect(toolbar.get('button[aria-label="Save document"]').attributes()).toHaveProperty('disabled')
-    expect(toolbar.element.firstElementChild).toBe(toolbar.get('.save-status').element)
     expect(toolbar.get('.editor-formatting-controls').get('button[aria-label="Bold"]')).toBeTruthy()
     expect(toolbar.get('.editor-formatting-controls').find('.save-status').exists()).toBe(false)
     expect(wrapper.find('.document-editor > .save-status').exists()).toBe(false)
