@@ -7,7 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- 
+## [0.3.1] - 2026-10-23
+
+### Changed
+
+- Save indicator placement is now on the right side of the document toolbar.
+
+### Fixed
+
+- Redo icon not appearing in the document toolbar.
+
+## [0.3.0] - 2026-10-22
+
+### Added
+
+- Document tabs for keeping multiple documents open while writing.
+- Two-pane split editing with independent document sessions and resizable panes.
+- Snapshot viewing and restoration in a dedicated split pane.
+
+### Changed
+
+- Save status and controls now appear in the document toolbar.
+
+### Fixed
+
+- Compile dialog styling now follows the active theme.
+- Text added while a snapshot was being restored is no longer overwritten.
+- Unsaved changes could be lost when creating or trashing Binder items while a document save was still in progress.
 
 ## [0.2.0] - 2026-10-20
 
@@ -47,7 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Editor focus after entering Focus mode.
 - Shared source resolution in clean test runs.
 
-[Unreleased]: https://github.com/brandongandy/plumavance/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/brandongandy/plumavance/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/brandongandy/plumavance/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/brandongandy/plumavance/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/brandongandy/plumavance/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/brandongandy/plumavance/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/brandongandy/plumavance/releases/tag/v0.1.0
